@@ -30,8 +30,8 @@ import kotlin.math.roundToInt
 class PulseWindowController
 @Inject
 constructor(
-    @DisplayId private val context: Context,
-    @DisplayId private val windowManager: WindowManager,
+    @param:DisplayId private val context: Context,
+    @param:DisplayId private val windowManager: WindowManager,
     private val view: PulseView,
 ) {
     private var attached = false

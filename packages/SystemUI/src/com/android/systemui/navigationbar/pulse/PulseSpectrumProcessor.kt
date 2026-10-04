@@ -16,13 +16,16 @@
 
 package com.android.systemui.navigationbar.pulse
 
+import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope
+import javax.inject.Inject
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.sqrt
 
 /** Converts Android Visualizer FFT output into smoothed logarithmic spectrum bars. */
-class PulseSpectrumProcessor {
+@NavigationBarScope
+class PulseSpectrumProcessor @Inject constructor() {
     private val bars = FloatArray(BAR_COUNT)
 
     fun process(fft: ByteArray): FloatArray {
