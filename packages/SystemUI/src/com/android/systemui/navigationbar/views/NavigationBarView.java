@@ -104,6 +104,8 @@ public class NavigationBarView extends FrameLayout {
     final static boolean ALTERNATE_CAR_MODE_UI = false;
 
     private Executor mBgExecutor;
+    @Nullable private Consumer<Boolean> mPulseVisibilityListener;
+    private boolean mPulseAggregatedVisible;
 
     // The current view is one of mHorizontal or mVertical depending on the current configuration
     View mCurrentView = null;
@@ -541,6 +543,26 @@ public class NavigationBarView extends FrameLayout {
     /** To be called when screen lock/unlock state changes */
     public void onScreenStateChanged(boolean isScreenOn) {
         mScreenOn = isScreenOn;
+    }
+
+    public void setPulseVisibilityListener(@Nullable Consumer<Boolean> listener) {
+        mPulseVisibilityListener = listener;
+        if (listener != null) {
+            mPulseAggregatedVisible = isAggregatedVisible();
+            listener.accept(mPulseAggregatedVisible);
+        }
+    }
+
+    @Override
+    public void onVisibilityAggregated(boolean isVisible) {
+        super.onVisibilityAggregated(isVisible);
+        if (mPulseAggregatedVisible == isVisible) {
+            return;
+        }
+        mPulseAggregatedVisible = isVisible;
+        if (mPulseVisibilityListener != null) {
+            mPulseVisibilityListener.accept(isVisible);
+        }
     }
 
     public void setWindowVisible(boolean visible) {
