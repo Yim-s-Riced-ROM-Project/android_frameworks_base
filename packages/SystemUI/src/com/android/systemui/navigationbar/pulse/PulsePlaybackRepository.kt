@@ -29,6 +29,12 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** The playback Pulse should visualize. [sessionId] is null when no positive session is known. */
 data class PulsePlaybackTarget(val active: Boolean, val sessionId: Int?) {
+    /** Session ids are never logged; only their presence is reported. */
+    override fun toString(): String {
+        val session = if (sessionId != null) "present" else "none"
+        return "PulsePlaybackTarget(active=$active, session=$session)"
+    }
+
     companion object {
         val INACTIVE = PulsePlaybackTarget(active = false, sessionId = null)
     }
@@ -39,7 +45,8 @@ data class PulsePlaybackTarget(val active: Boolean, val sessionId: Int?) {
 class PulsePlaybackRepository @Inject constructor(private val audioManager: AudioManager) {
     /**
      * Cold flow: every collector gets its own [TargetSelector], so selection state is never shared
-     * between collectors.
+     * between collectors. It is intended for a single consumer per display (PulseController); each
+     * collection owns its own selection state.
      */
     val target: Flow<PulsePlaybackTarget> =
         conflatedCallbackFlow {
@@ -54,7 +61,7 @@ class PulsePlaybackRepository @Inject constructor(private val audioManager: Audi
                     }
 
                 audioManager.registerAudioPlaybackCallback(callback, null)
-                trySend(selector.select(audioManager.activePlaybackConfigurations))
+                trySend(selector.selectCurrent { audioManager.activePlaybackConfigurations })
                 awaitClose { audioManager.unregisterAudioPlaybackCallback(callback) }
             }
             .distinctUntilChanged()
@@ -65,6 +72,11 @@ class PulsePlaybackRepository @Inject constructor(private val audioManager: Audi
     private class TargetSelector {
         private var selectedPlayer: SelectedPlayer? = null
         private var previousEligiblePlayerIds: Set<Int> = emptySet()
+
+        /** Fetches and selects under one lock so a callback cannot interleave with the snapshot. */
+        @Synchronized
+        fun selectCurrent(fetch: () -> List<AudioPlaybackConfiguration>): PulsePlaybackTarget =
+            select(fetch())
 
         @Synchronized
         fun select(configurations: List<AudioPlaybackConfiguration>): PulsePlaybackTarget {

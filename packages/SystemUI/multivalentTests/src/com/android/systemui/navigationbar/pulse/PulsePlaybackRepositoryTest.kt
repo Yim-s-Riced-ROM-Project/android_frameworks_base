@@ -48,6 +48,18 @@ class PulsePlaybackRepositoryTest {
     }
 
     @Test
+    fun targetToString_redactsSessionId() {
+        assertThat(PulsePlaybackTarget(true, 42).toString().contains("42")).isFalse()
+        assertThat(PulsePlaybackTarget(true, 42).toString())
+            .isEqualTo("PulsePlaybackTarget(active=true, session=present)")
+        assertThat(PulsePlaybackTarget(true, null).toString())
+            .isEqualTo("PulsePlaybackTarget(active=true, session=none)")
+        assertThat(PulsePlaybackTarget.INACTIVE.toString())
+            .isEqualTo("PulsePlaybackTarget(active=false, session=none)")
+        assertThat(PulsePlaybackTarget(true, 42)).isEqualTo(PulsePlaybackTarget(true, 42))
+    }
+
+    @Test
     fun target_emitsCurrentStateAndChangedCallbackStateOnly() = runTest {
         val (values, callback) = startCollecting()
 
@@ -212,7 +224,7 @@ class PulsePlaybackRepositoryTest {
     fun collection_registersAndUnregistersSameCallback() = runTest {
         val job = backgroundScope.launch { underTest.target.toList() }
         runCurrent()
-        val callback = registeredCallback()
+        val callback = takeRegisteredCallback()
         verify(audioManager, never()).unregisterAudioPlaybackCallback(any())
 
         job.cancelAndJoin()
@@ -225,7 +237,7 @@ class PulsePlaybackRepositoryTest {
         val values = mutableListOf<PulsePlaybackTarget>()
         backgroundScope.launch { underTest.target.toList(values) }
         runCurrent()
-        return values to registeredCallback()
+        return values to takeRegisteredCallback()
     }
 
     private fun TestScope.collectInitial(
@@ -237,7 +249,6 @@ class PulsePlaybackRepositoryTest {
         runCurrent()
         job.cancel()
         runCurrent()
-        whenever(audioManager.activePlaybackConfigurations).thenReturn(emptyList())
         return values
     }
 
@@ -263,11 +274,14 @@ class PulsePlaybackRepositoryTest {
         }
     }
 
-    private fun registeredCallback(): AudioManager.AudioPlaybackCallback {
+    /**
+     * Returns the callback just registered and clears recorded invocations (stubs are kept), so the
+     * next registration in the same test can be verified exactly once.
+     */
+    private fun takeRegisteredCallback(): AudioManager.AudioPlaybackCallback {
         val captor = argumentCaptor<AudioManager.AudioPlaybackCallback>()
         verify(audioManager).registerAudioPlaybackCallback(captor.capture(), isNull())
         clearInvocations(audioManager)
-        whenever(audioManager.activePlaybackConfigurations).thenReturn(emptyList())
         return captor.lastValue
     }
 
