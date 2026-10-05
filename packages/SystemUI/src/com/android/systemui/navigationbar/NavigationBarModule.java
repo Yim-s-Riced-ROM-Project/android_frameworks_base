@@ -25,15 +25,12 @@ import com.android.app.displaylib.PerDisplayRepository;
 import com.android.systemui.dagger.qualifiers.DisplayId;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope;
-import com.android.systemui.navigationbar.pulse.PulseAudioCapture;
-import com.android.systemui.navigationbar.pulse.VisualizerPulseAudioCapture;
 import com.android.systemui.navigationbar.views.NavigationBarFrame;
 import com.android.systemui.navigationbar.views.NavigationBarView;
 import com.android.systemui.res.R;
 import com.android.systemui.shade.shared.flag.ShadeWindowGoesAround;
 import com.android.systemui.utils.windowmanager.WindowManagerProvider;
 
-import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
 
@@ -72,11 +69,6 @@ public interface NavigationBarModule {
             WindowManagerProvider windowManagerProvider) {
         return windowManagerProvider.getWindowManager(context);
     }
-
-    /** Binds the display-scoped Pulse capture implementation. */
-    @Binds
-    @NavigationBarScope
-    PulseAudioCapture bindPulseAudioCapture(VisualizerPulseAudioCapture capture);
 
     /** A SysUiState for the navigation bar display. */
     @Provides

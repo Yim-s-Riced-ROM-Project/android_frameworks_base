@@ -16,7 +16,11 @@
 
 package com.android.systemui.navigationbar.pulse
 
+import com.android.app.displaylib.PerDisplayRepository
+import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,4 +73,14 @@ class PulseHostStateRepository {
     // NONE is never a valid source, even while no host is active.
     private fun PulseHostState.isActive(source: PulseHost) =
         source != PulseHost.NONE && activeHost == source
+}
+
+/** Gives SysUI-scoped hosts (navigation bar, taskbar) access to each display's host state. */
+@SysUISingleton
+class PulseHostStateRepositoryStore
+@Inject
+constructor(private val displayComponents: PerDisplayRepository<SystemUIDisplaySubcomponent>) {
+    /** Returns null when the display no longer exists. */
+    fun forDisplay(displayId: Int): PulseHostStateRepository? =
+        displayComponents[displayId]?.pulseHostStateRepository
 }

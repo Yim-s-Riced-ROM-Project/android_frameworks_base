@@ -34,6 +34,10 @@ import com.android.systemui.display.data.repository.DisplayStateRepositoryImpl
 import com.android.systemui.display.domain.interactor.DisplayStateInteractor
 import com.android.systemui.display.domain.interactor.DisplayStateInteractorImpl
 import com.android.systemui.display.shared.DisplayNotFoundException
+import com.android.systemui.navigationbar.pulse.PulseAudioCapture
+import com.android.systemui.navigationbar.pulse.PulseController
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository
+import com.android.systemui.navigationbar.pulse.VisualizerPulseAudioCapture
 import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.statusbar.dagger.PerDisplayStatusBarModule
 import com.android.systemui.statusbar.phone.DarkIconDispatcherImpl
@@ -93,6 +97,18 @@ interface PerDisplaySystemUIModule {
 
     @Binds @DisplayAware fun sysUICutoutProvider(impl: SysUICutoutProviderImpl): SysUICutoutProvider
 
+    @Binds
+    @PerDisplaySingleton
+    @DisplayAware
+    fun bindPulseAudioCapture(impl: VisualizerPulseAudioCapture): PulseAudioCapture
+
+    @Binds
+    @DisplayAware
+    @IntoSet
+    fun bindPulseControllerLifecycleListener(
+        impl: PulseController
+    ): SystemUIDisplaySubcomponent.LifecycleListener
+
     companion object {
 
         @Provides
@@ -140,5 +156,10 @@ interface PerDisplaySystemUIModule {
         }
 
         @Provides @DisplayAware fun provideDisplayId(@DisplayId displayId: Int): Int = displayId
+
+        @Provides
+        @PerDisplaySingleton
+        @DisplayAware
+        fun providePulseHostStateRepository(): PulseHostStateRepository = PulseHostStateRepository()
     }
 }

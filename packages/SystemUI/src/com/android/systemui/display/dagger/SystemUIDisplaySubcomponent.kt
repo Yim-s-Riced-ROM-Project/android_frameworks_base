@@ -21,6 +21,7 @@ import com.android.systemui.common.ui.ConfigurationState
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import com.android.systemui.display.data.repository.DisplayStateRepository
 import com.android.systemui.display.domain.interactor.DisplayStateInteractor
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository
 import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.statusbar.chips.ui.viewmodel.OngoingActivityChipsViewModel
 import com.android.systemui.statusbar.domain.interactor.StatusBarIconRefreshInteractor
@@ -69,6 +70,8 @@ interface SystemUIDisplaySubcomponent {
     @get:DisplayAware val configurationState: ConfigurationState
 
     @get:DisplayAware val sysUICutoutProvider: SysUICutoutProvider
+
+    @get:DisplayAware val pulseHostStateRepository: PulseHostStateRepository
 
     @Subcomponent.Factory
     interface Factory {
