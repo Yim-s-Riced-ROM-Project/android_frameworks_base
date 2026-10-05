@@ -23,6 +23,23 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.sqrt
 
+/**
+ * Android Visualizer FFT byte layout shared by Pulse consumers: byte 0 is the DC real part, byte 1
+ * is the Nyquist real part, and bins 1 until size / 2 are (real, imaginary) signed byte pairs.
+ */
+internal object PulseFft {
+    /** Normalized magnitude at or below this value is treated as noise. */
+    const val NOISE_FLOOR = 0.02f
+    val MAX_MAGNITUDE = sqrt(2f * Byte.MIN_VALUE * Byte.MIN_VALUE)
+
+    /** Magnitude of [bin] (1 until size / 2) scaled to 0..1 against the largest possible pair. */
+    fun normalizedMagnitude(fft: ByteArray, bin: Int): Float {
+        val real = fft[bin * 2].toFloat()
+        val imaginary = fft[bin * 2 + 1].toFloat()
+        return sqrt(real * real + imaginary * imaginary) / MAX_MAGNITUDE
+    }
+}
+
 /** Converts Android Visualizer FFT output into smoothed logarithmic spectrum bars. */
 @NavigationBarScope
 class PulseSpectrumProcessor @Inject constructor() {
@@ -60,12 +77,10 @@ class PulseSpectrumProcessor @Inject constructor() {
     private fun averageMagnitude(fft: ByteArray, startBin: Int, endBin: Int): Float {
         var sum = 0f
         for (bin in startBin until endBin) {
-            val real = fft[bin * 2].toFloat()
-            val imaginary = fft[bin * 2 + 1].toFloat()
-            sum += sqrt(real * real + imaginary * imaginary) / MAX_MAGNITUDE
+            sum += PulseFft.normalizedMagnitude(fft, bin)
         }
         val average = sum / (endBin - startBin)
-        return ((average - NOISE_FLOOR) / (1f - NOISE_FLOOR)).coerceIn(0f, 1f)
+        return ((average - PulseFft.NOISE_FLOOR) / (1f - PulseFft.NOISE_FLOOR)).coerceIn(0f, 1f)
     }
 
     private fun clearBars(): FloatArray {
@@ -78,7 +93,5 @@ class PulseSpectrumProcessor @Inject constructor() {
         const val MIN_FFT_SIZE = 2 + BAR_COUNT * 2
         const val ATTACK = 0.55f
         const val DECAY = 0.20f
-        const val NOISE_FLOOR = 0.02f
-        val MAX_MAGNITUDE = sqrt(2f * Byte.MIN_VALUE * Byte.MIN_VALUE)
     }
 }
