@@ -25,6 +25,7 @@ import com.android.systemui.statusbar.policy.BatteryController
 import com.google.common.truth.Truth.assertThat
 import java.util.concurrent.Executor
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -61,7 +62,8 @@ class PulseControllerTest : SysuiTestCase() {
     fun setUp() {
         MockitoAnnotations.initMocks(this)
         whenever(settingsRepository.config).thenReturn(settings)
-        whenever(playbackRepository.isPlaybackActive).thenReturn(playbackActive)
+        whenever(playbackRepository.target)
+            .thenReturn(playbackActive.map { PulsePlaybackTarget(it, null) })
         whenever(deviceEntryInteractor.isDeviceEntered).thenReturn(deviceEntered)
         whenever(powerInteractor.isAwake).thenReturn(awake)
         whenever(batteryController.isPowerSave).thenReturn(false)

@@ -101,8 +101,8 @@ constructor(
                     }
                 }
                 launch {
-                    playbackRepository.isPlaybackActive.collectLatest {
-                        playbackActive = it
+                    playbackRepository.target.collectLatest {
+                        playbackActive = it.active
                         recompute()
                     }
                 }

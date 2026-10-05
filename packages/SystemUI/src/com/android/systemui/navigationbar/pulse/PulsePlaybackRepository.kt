@@ -27,38 +27,77 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-/** Reports whether local playback suitable for Pulse visualization is active. */
+/** The playback Pulse should visualize. [sessionId] is null when no positive session is known. */
+data class PulsePlaybackTarget(val active: Boolean, val sessionId: Int?) {
+    companion object {
+        val INACTIVE = PulsePlaybackTarget(active = false, sessionId = null)
+    }
+}
+
+/** Reports the local playback suitable for Pulse visualization, keeping selection stable. */
 @SysUISingleton
 class PulsePlaybackRepository @Inject constructor(private val audioManager: AudioManager) {
-    val isPlaybackActive: Flow<Boolean> =
+    /**
+     * Cold flow: every collector gets its own [TargetSelector], so selection state is never shared
+     * between collectors.
+     */
+    val target: Flow<PulsePlaybackTarget> =
         conflatedCallbackFlow {
+                val selector = TargetSelector()
                 val callback =
                     object : AudioManager.AudioPlaybackCallback() {
                         override fun onPlaybackConfigChanged(
                             configs: List<AudioPlaybackConfiguration>
                         ) {
-                            trySend(configs.hasVisualizablePlayback())
+                            trySend(selector.select(configs))
                         }
                     }
 
                 audioManager.registerAudioPlaybackCallback(callback, null)
-                trySend(audioManager.activePlaybackConfigurations.hasVisualizablePlayback())
+                trySend(selector.select(audioManager.activePlaybackConfigurations))
                 awaitClose { audioManager.unregisterAudioPlaybackCallback(callback) }
             }
             .distinctUntilChanged()
 
-    private fun List<AudioPlaybackConfiguration>.hasVisualizablePlayback(): Boolean {
-        return any { config ->
-            config.isActive &&
-                config.audioAttributes.usage in VISUALIZABLE_USAGES &&
-                !config.isRemoteSubmixOnly()
-        }
-    }
+    private data class SelectedPlayer(val playerInterfaceId: Int, val sessionId: Int?)
 
-    private fun AudioPlaybackConfiguration.isRemoteSubmixOnly(): Boolean {
-        val devices = audioDeviceInfos
-        return devices.isNotEmpty() &&
-            devices.all { device -> device.type == AudioDeviceInfo.TYPE_REMOTE_SUBMIX }
+    /** Selection state for one collection. Player ids are only used here, never logged. */
+    private class TargetSelector {
+        private var selectedPlayer: SelectedPlayer? = null
+        private var previousEligiblePlayerIds: Set<Int> = emptySet()
+
+        @Synchronized
+        fun select(configurations: List<AudioPlaybackConfiguration>): PulsePlaybackTarget {
+            val eligible = configurations.filter { it.isEligibleForPulse() }
+            val retained =
+                selectedPlayer?.let { selected ->
+                    eligible.firstOrNull { it.playerInterfaceId == selected.playerInterfaceId }
+                }
+            val chosen =
+                retained
+                    ?: eligible.firstOrNull {
+                        it.playerInterfaceId !in previousEligiblePlayerIds && it.sessionId > 0
+                    }
+                    ?: eligible.firstOrNull { it.sessionId > 0 }
+                    ?: eligible.firstOrNull()
+            previousEligiblePlayerIds = eligible.mapTo(mutableSetOf()) { it.playerInterfaceId }
+            selectedPlayer =
+                chosen?.let {
+                    SelectedPlayer(it.playerInterfaceId, it.sessionId.takeIf { id -> id > 0 })
+                }
+            return selectedPlayer?.let {
+                PulsePlaybackTarget(active = true, sessionId = it.sessionId)
+            } ?: PulsePlaybackTarget.INACTIVE
+        }
+
+        private fun AudioPlaybackConfiguration.isEligibleForPulse(): Boolean =
+            isActive && audioAttributes.usage in VISUALIZABLE_USAGES && !isRemoteSubmixOnly()
+
+        private fun AudioPlaybackConfiguration.isRemoteSubmixOnly(): Boolean {
+            val devices = audioDeviceInfos
+            return devices.isNotEmpty() &&
+                devices.all { device -> device.type == AudioDeviceInfo.TYPE_REMOTE_SUBMIX }
+        }
     }
 
     private companion object {
