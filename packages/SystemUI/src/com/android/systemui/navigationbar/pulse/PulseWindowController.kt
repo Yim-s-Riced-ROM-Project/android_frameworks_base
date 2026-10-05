@@ -21,22 +21,31 @@ import android.graphics.PixelFormat
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
-import com.android.systemui.dagger.qualifiers.DisplayId
-import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
-@NavigationBarScope
+/** Sole owner of the Pulse overlay window on one display. Main thread only. */
+@PerDisplaySingleton
 class PulseWindowController
 @Inject
-constructor(
-    @param:DisplayId private val context: Context,
-    @param:DisplayId private val windowManager: WindowManager,
-    private val view: PulseView,
-) {
+constructor(@param:DisplayAware private val context: Context, private val view: PulseView) {
+    private val windowManager = context.getSystemService(WindowManager::class.java)
+    private val windowTitle = "Pulse${context.displayId}"
     private var attached = false
+    private var windowFailureListener: (() -> Unit)? = null
     private var heightDp = DEFAULT_HEIGHT_DP
     private var layoutParams: WindowManager.LayoutParams? = null
+
+    init {
+        view.configurationListener = ::onViewConfigurationChanged
+    }
+
+    /** Invoked after the window had to be removed because it could no longer be updated. */
+    fun setWindowFailureListener(listener: (() -> Unit)?) {
+        windowFailureListener = listener
+    }
 
     fun show(heightDp: Int): Boolean {
         updateHeight(heightDp)
@@ -48,11 +57,9 @@ constructor(
             layoutParams = params
             attached = true
             true
-        } catch (error: WindowManager.InvalidDisplayException) {
-            Log.w(TAG, "Unable to add Pulse window", error)
-            false
-        } catch (error: IllegalArgumentException) {
-            Log.w(TAG, "Unable to add Pulse window", error)
+        } catch (error: RuntimeException) {
+            // WindowManager failures (bad token, invalid display, detached view) fail closed.
+            Log.w(TAG, "Unable to add Pulse window: ${error.javaClass.simpleName}")
             false
         }
     }
@@ -64,11 +71,9 @@ constructor(
         return try {
             windowManager.updateViewLayout(view, params)
             true
-        } catch (error: WindowManager.InvalidDisplayException) {
-            Log.w(TAG, "Unable to update Pulse window", error)
-            false
-        } catch (error: IllegalArgumentException) {
-            Log.w(TAG, "Unable to update Pulse window", error)
+        } catch (error: RuntimeException) {
+            // WindowManager failures (bad token, invalid display, detached view) fail closed.
+            Log.w(TAG, "Unable to update Pulse window: ${error.javaClass.simpleName}")
             false
         }
     }
@@ -80,14 +85,14 @@ constructor(
     fun clear() = view.clear()
 
     fun hide() {
-        view.clear()
         if (!attached) return
+        view.clear()
         attached = false
         layoutParams = null
         try {
             windowManager.removeViewImmediate(view)
-        } catch (error: IllegalArgumentException) {
-            Log.w(TAG, "Unable to remove Pulse window", error)
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "Unable to remove Pulse window: ${error.javaClass.simpleName}")
         }
     }
 
@@ -96,6 +101,12 @@ constructor(
     }
 
     fun destroy() = hide()
+
+    private fun onViewConfigurationChanged() {
+        if (!attached || onConfigurationChanged()) return
+        hide()
+        windowFailureListener?.invoke()
+    }
 
     private fun createLayoutParams(): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
@@ -120,7 +131,7 @@ constructor(
                         WindowManager.LayoutParams.PRIVATE_FLAG_EXCLUDE_FROM_SCREEN_MAGNIFICATION
                 setFitInsetsTypes(0)
                 setTrustedOverlay()
-                setTitle("Pulse${context.displayId}")
+                title = windowTitle
                 accessibilityTitle = ""
             }
     }

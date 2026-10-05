@@ -123,7 +123,6 @@ import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarSc
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.navigationbar.NavigationModeController.ModeChangedListener;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
-import com.android.systemui.navigationbar.pulse.PulseController;
 import com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle;
 import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.views.buttons.DeadZone;
@@ -230,7 +229,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
     private final UserContextProvider mUserContextProvider;
     private final WakefulnessLifecycle mWakefulnessLifecycle;
     private final DisplayTracker mDisplayTracker;
-    private final PulseController mPulseController;
     private final RegionSamplingHelper mRegionSamplingHelper;
     private final int mNavColorSampleMargin;
     private EdgeBackGestureHandler mEdgeBackGestureHandler;
@@ -546,7 +544,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
                     .commitUpdate(mDisplayId);
             mView.setInScreenPinning(mScreenPinningActive);
             updateScreenPinningGestures();
-            mPulseController.setScreenPinningActive(mScreenPinningActive);
         }
     };
 
@@ -595,8 +592,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             TaskStackChangeListeners taskStackChangeListeners,
             DisplayTracker displayTracker,
             NavBarButtonClickLogger navBarButtonClickLogger,
-            NavbarOrientationTrackingLogger navbarOrientationTrackingLogger,
-            PulseController pulseController) {
+            NavbarOrientationTrackingLogger navbarOrientationTrackingLogger) {
         super(navigationBarView);
         mFrame = navigationBarFrame;
         mContext = context;
@@ -639,7 +635,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         mEdgeBackGestureHandler = navBarHelper.getEdgeBackGestureHandler();
         mNavBarButtonClickLogger = navBarButtonClickLogger;
         mNavbarOrientationTrackingLogger = navbarOrientationTrackingLogger;
-        mPulseController = pulseController;
 
         mNavColorSampleMargin = getResources()
                 .getDimensionPixelSize(R.dimen.navigation_handle_sample_horizontal_margin);
@@ -742,7 +737,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         }
         mDisplayId = mContext.getDisplayId();
         mIsOnDefaultDisplay = mDisplayId == mDisplayTracker.getDefaultDisplayId();
-        mPulseController.init(mIsOnDefaultDisplay);
 
         // Ensure we try to get currentSysuiState from navBarHelper before command queue callbacks
         // start firing, since the latter is source of truth
@@ -776,7 +770,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
     public void destroyView() {
         Trace.beginSection("NavigationBar#destroyView");
-        mPulseController.destroy();
         try {
             setAutoHideController(/* autoHideController */ null);
             mCommandQueue.removeCallback(this);
@@ -822,9 +815,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             getBarTransitions().getLightTransitionsController().restoreState(mSavedState);
         }
         setWindowVisible(isNavBarWindowVisible());
-        mView.setPulseVisibilityListener(mPulseController::setAggregateVisible);
-        mPulseController.setScreenPinningActive(mScreenPinningActive);
-        mPulseController.attach();
         mView.setBehavior(mBehavior);
         setNavBarMode(mNavBarMode);
         repositionNavigationBar(mCurrentRotation);
@@ -880,8 +870,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
     @Override
     public void onViewDetached() {
-        mView.setPulseVisibilityListener(null);
-        mPulseController.detach();
         mView.setUpdateActiveTouchRegionsCallback(null);
         getBarTransitions().destroy();
         mLauncherProxyService.removeCallback(mLauncherProxyListener);
@@ -941,7 +929,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             refreshLayout(ld);
         }
         repositionNavigationBar(rotation);
-        mPulseController.onConfigurationChanged();
         if (canShowSecondaryHandle()) {
             if (rotation != mCurrentRotation) {
                 mCurrentRotation = rotation;
@@ -1713,7 +1700,6 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
     private void setWindowVisible(boolean visible) {
         mRegionSamplingHelper.setWindowVisible(visible);
         mView.setWindowVisible(visible);
-        mPulseController.setNavigationWindowVisible(visible);
     }
 
     /** Sets {@link AutoHideController} to the navigation bar. */

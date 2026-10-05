@@ -18,11 +18,11 @@ package com.android.systemui.navigationbar.pulse
 
 import android.media.audiofx.Visualizer
 import android.util.Log
-import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import javax.inject.Inject
 import kotlin.math.min
 
-@NavigationBarScope
+@PerDisplaySingleton
 class VisualizerPulseAudioCapture
 constructor(
     private val factory: VisualizerFactory,

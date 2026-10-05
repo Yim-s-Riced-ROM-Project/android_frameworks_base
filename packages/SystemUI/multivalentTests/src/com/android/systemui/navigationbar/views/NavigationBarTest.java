@@ -98,7 +98,6 @@ import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavBarHelper;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationModeController;
-import com.android.systemui.navigationbar.pulse.PulseController;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.views.buttons.DeadZone;
@@ -179,8 +178,6 @@ public class NavigationBarTest extends SysuiTestCase {
     ButtonDispatcher mBackButton;
     @Mock
     NavigationBarTransitions mNavigationBarTransitions;
-    @Mock
-    PulseController mPulseController;
     @Mock
     RotationButtonController mRotationButtonController;
     @Mock
@@ -662,25 +659,6 @@ public class NavigationBarTest extends SysuiTestCase {
         mTaskStackChangeListeners.getListenerImpl().onLockTaskModeChanged(
                 ActivityManager.LOCK_TASK_MODE_PINNED);
         verify(mMockSysUiState).setFlag(eq(SYSUI_STATE_SCREEN_PINNING), eq(true));
-        verify(mPulseController).setScreenPinningActive(true);
-    }
-
-    @Test
-    public void testPulseLifecycle_primaryDisplay() {
-        mNavigationBar.init();
-        verify(mPulseController).init(true);
-
-        mNavigationBar.onViewAttached();
-        verify(mPulseController).attach();
-
-        mNavigationBar.onViewDetached();
-        verify(mPulseController).detach();
-    }
-
-    @Test
-    public void testPulseLifecycle_secondaryDisplayIsInert() {
-        mExternalDisplayNavigationBar.init();
-        verify(mPulseController).init(false);
     }
 
     private NavigationBar createNavBar(Context context) {
@@ -731,8 +709,7 @@ public class NavigationBarTest extends SysuiTestCase {
                 mTaskStackChangeListeners,
                 new FakeDisplayTracker(mContext),
                 mNavBarButtonClickLogger,
-                mNavbarOrientationTrackingLogger,
-                mPulseController));
+                mNavbarOrientationTrackingLogger));
     }
 
     private void processAllMessages() {

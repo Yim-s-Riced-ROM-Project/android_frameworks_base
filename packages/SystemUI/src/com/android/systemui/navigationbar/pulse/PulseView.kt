@@ -17,17 +17,21 @@
 package com.android.systemui.navigationbar.pulse
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.view.View
-import com.android.systemui.dagger.qualifiers.DisplayId
-import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import javax.inject.Inject
 import kotlin.math.min
 
-@NavigationBarScope
-class PulseView @Inject constructor(@DisplayId context: Context) : View(context) {
+@PerDisplaySingleton
+class PulseView @Inject constructor(@param:DisplayAware context: Context) : View(context) {
+    /** Notified on the main thread when the attached window's configuration changes. */
+    var configurationListener: (() -> Unit)? = null
+
     private val paint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
@@ -64,6 +68,11 @@ class PulseView @Inject constructor(@DisplayId context: Context) : View(context)
     fun clear() {
         synchronized(levels) { levels.fill(0f) }
         postInvalidateOnAnimation()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        configurationListener?.invoke()
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
