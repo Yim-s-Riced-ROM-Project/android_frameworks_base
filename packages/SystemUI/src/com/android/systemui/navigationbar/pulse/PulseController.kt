@@ -195,6 +195,8 @@ constructor(
 
         val started =
             audioCapture.start(
+                // TODO: pass the selected playback session once the controller is reworked.
+                requestedSessionId = null,
                 onFftData = { fft ->
                     val levels = synchronized(spectrumProcessor) { spectrumProcessor.process(fft) }
                     windowController.setLevels(levels)

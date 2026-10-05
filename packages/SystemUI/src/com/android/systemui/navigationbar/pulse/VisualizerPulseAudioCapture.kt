@@ -17,24 +17,51 @@
 package com.android.systemui.navigationbar.pulse
 
 import android.media.audiofx.Visualizer
+import android.util.Log
 import com.android.systemui.navigationbar.NavigationBarComponent.NavigationBarScope
 import javax.inject.Inject
 import kotlin.math.min
 
 @NavigationBarScope
-class VisualizerPulseAudioCapture constructor(private val factory: VisualizerFactory) :
-    PulseAudioCapture {
+class VisualizerPulseAudioCapture
+constructor(
+    private val factory: VisualizerFactory,
+    private val logWarning: (String) -> Unit = { Log.w(TAG, it) },
+) : PulseAudioCapture {
     @Inject constructor(factory: PlatformVisualizerFactory) : this(factory as VisualizerFactory)
 
     private var visualizer: VisualizerHandle? = null
 
     @Synchronized
-    override fun start(onFftData: (ByteArray) -> Unit, onFailure: () -> Unit): Boolean {
+    override fun start(
+        requestedSessionId: Int?,
+        onFftData: (ByteArray) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean {
         if (visualizer != null) return true
 
+        val sessions =
+            if (requestedSessionId != null && requestedSessionId > 0) {
+                intArrayOf(requestedSessionId, OUTPUT_MIX_SESSION)
+            } else {
+                intArrayOf(OUTPUT_MIX_SESSION)
+            }
+        for (sessionId in sessions) {
+            if (startOne(sessionId, onFftData, onFailure)) return true
+        }
+        onFailure()
+        return false
+    }
+
+    /** Starts one candidate session; on failure it is fully cleaned up and no callback is made. */
+    private fun startOne(
+        sessionId: Int,
+        onFftData: (ByteArray) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean {
         var candidate: VisualizerHandle? = null
         return try {
-            candidate = factory.create(OUTPUT_MIX_SESSION)
+            candidate = factory.create(sessionId)
             requireSuccess(candidate.setEnabled(false), "disable")
             requireSuccess(candidate.setCaptureSize(CAPTURE_SIZE), "capture size")
             try {
@@ -59,17 +86,21 @@ class VisualizerPulseAudioCapture constructor(private val factory: VisualizerFac
             visualizer = candidate
             requireSuccess(candidate.setEnabled(true), "enable")
             true
-        } catch (_: Exception) {
-            visualizer = null
-            candidate?.cleanup()
-            onFailure()
+        } catch (e: Exception) {
+            abandon(candidate, e)
             false
-        } catch (_: LinkageError) {
-            visualizer = null
-            candidate?.cleanup()
-            onFailure()
+        } catch (e: LinkageError) {
+            abandon(candidate, e)
             false
         }
+    }
+
+    private fun abandon(candidate: VisualizerHandle?, error: Throwable) {
+        // Log the failing stage and exception class only; never session ids or messages.
+        val stage = (error as? SetupStageException)?.stage ?: "create"
+        logWarning("Pulse capture setup failed at $stage: ${error.javaClass.simpleName}")
+        visualizer = null
+        candidate?.cleanup()
     }
 
     override fun stop() {
@@ -105,7 +136,7 @@ class VisualizerPulseAudioCapture constructor(private val factory: VisualizerFac
     }
 
     private fun requireSuccess(status: Int, operation: String) {
-        check(status == Visualizer.SUCCESS) { "$operation failed with status $status" }
+        if (status != Visualizer.SUCCESS) throw SetupStageException(operation)
     }
 
     private fun VisualizerHandle.cleanup() {
@@ -114,7 +145,10 @@ class VisualizerPulseAudioCapture constructor(private val factory: VisualizerFac
         runCatching { release() }
     }
 
+    private class SetupStageException(val stage: String) : IllegalStateException()
+
     private companion object {
+        const val TAG = "PulseCapture"
         const val OUTPUT_MIX_SESSION = 0
         const val CAPTURE_SIZE = 512
         const val CAPTURE_RATE_MHZ = 25_000

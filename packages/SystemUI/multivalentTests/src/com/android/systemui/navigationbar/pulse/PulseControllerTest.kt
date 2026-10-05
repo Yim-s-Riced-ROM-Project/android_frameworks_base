@@ -198,7 +198,11 @@ class PulseControllerTest : SysuiTestCase() {
         var stopCount = 0
         private var failure: (() -> Unit)? = null
 
-        override fun start(onFftData: (ByteArray) -> Unit, onFailure: () -> Unit): Boolean {
+        override fun start(
+            requestedSessionId: Int?,
+            onFftData: (ByteArray) -> Unit,
+            onFailure: () -> Unit,
+        ): Boolean {
             startCount++
             failure = onFailure
             return true

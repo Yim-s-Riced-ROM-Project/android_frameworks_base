@@ -18,7 +18,15 @@ package com.android.systemui.navigationbar.pulse
 
 /** Owns FFT capture for Pulse without exposing the platform audio effect. */
 interface PulseAudioCapture {
-    fun start(onFftData: (ByteArray) -> Unit, onFailure: () -> Unit): Boolean
+    /**
+     * Starts capture on [requestedSessionId] when positive, falling back once to the output mix.
+     * [onFailure] is invoked once if every candidate fails to start.
+     */
+    fun start(
+        requestedSessionId: Int?,
+        onFftData: (ByteArray) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean
 
     fun stop()
 }
