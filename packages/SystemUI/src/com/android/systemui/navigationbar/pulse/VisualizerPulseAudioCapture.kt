@@ -30,16 +30,28 @@ constructor(
 ) : PulseAudioCapture {
     @Inject constructor(factory: PlatformVisualizerFactory) : this(factory as VisualizerFactory)
 
+    private val lock = Any()
     private var visualizer: VisualizerHandle? = null
 
-    @Synchronized
     override fun start(
         requestedSessionId: Int?,
         onFftData: (ByteArray) -> Unit,
         onFailure: () -> Unit,
     ): Boolean {
-        if (visualizer != null) return true
+        val started =
+            synchronized(lock) {
+                visualizer != null || startFirstAvailable(requestedSessionId, onFftData, onFailure)
+            }
+        // The terminal callback runs outside the lock so a client cannot re-enter or block capture.
+        if (!started) onFailure()
+        return started
+    }
 
+    private fun startFirstAvailable(
+        requestedSessionId: Int?,
+        onFftData: (ByteArray) -> Unit,
+        onFailure: () -> Unit,
+    ): Boolean {
         val sessions =
             if (requestedSessionId != null && requestedSessionId > 0) {
                 intArrayOf(requestedSessionId, OUTPUT_MIX_SESSION)
@@ -49,7 +61,6 @@ constructor(
         for (sessionId in sessions) {
             if (startOne(sessionId, onFftData, onFailure)) return true
         }
-        onFailure()
         return false
     }
 
@@ -59,45 +70,45 @@ constructor(
         onFftData: (ByteArray) -> Unit,
         onFailure: () -> Unit,
     ): Boolean {
+        var stage = "create"
         var candidate: VisualizerHandle? = null
         return try {
-            candidate = factory.create(sessionId)
-            requireSuccess(candidate.setEnabled(false), "disable")
-            requireSuccess(candidate.setCaptureSize(CAPTURE_SIZE), "capture size")
+            val handle = factory.create(sessionId)
+            candidate = handle
+            stage = "disable"
+            requireSuccess(handle.setEnabled(false))
+            stage = "capture size"
+            requireSuccess(handle.setCaptureSize(CAPTURE_SIZE))
+            stage = "scaling mode"
             try {
-                requireSuccess(
-                    candidate.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED),
-                    "scaling mode",
-                )
+                requireSuccess(handle.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED))
             } catch (_: NoSuchMethodError) {
                 // Some vendor implementations omit this optional method.
             }
-            requireSuccess(
-                candidate.setMeasurementMode(Visualizer.MEASUREMENT_MODE_NONE),
-                "measurement mode",
-            )
+            stage = "measurement mode"
+            requireSuccess(handle.setMeasurementMode(Visualizer.MEASUREMENT_MODE_NONE))
+            stage = "capture listener"
             val captureRate = min(CAPTURE_RATE_MHZ, factory.maxCaptureRate)
             requireSuccess(
-                candidate.setFftCaptureListener(captureRate) { fft ->
-                    handleFft(candidate, fft, onFftData, onFailure)
-                },
-                "capture listener",
+                handle.setFftCaptureListener(captureRate) { fft ->
+                    handleFft(handle, fft, onFftData, onFailure)
+                }
             )
-            visualizer = candidate
-            requireSuccess(candidate.setEnabled(true), "enable")
+            visualizer = handle
+            stage = "enable"
+            requireSuccess(handle.setEnabled(true))
             true
         } catch (e: Exception) {
-            abandon(candidate, e)
+            abandon(candidate, stage, e)
             false
         } catch (e: LinkageError) {
-            abandon(candidate, e)
+            abandon(candidate, stage, e)
             false
         }
     }
 
-    private fun abandon(candidate: VisualizerHandle?, error: Throwable) {
+    private fun abandon(candidate: VisualizerHandle?, stage: String, error: Throwable) {
         // Log the failing stage and exception class only; never session ids or messages.
-        val stage = (error as? SetupStageException)?.stage ?: "create"
         logWarning("Pulse capture setup failed at $stage: ${error.javaClass.simpleName}")
         visualizer = null
         candidate?.cleanup()
@@ -105,7 +116,7 @@ constructor(
 
     override fun stop() {
         val current =
-            synchronized(this) {
+            synchronized(lock) {
                 val result = visualizer
                 visualizer = null
                 result
@@ -114,18 +125,18 @@ constructor(
     }
 
     private fun handleFft(
-        source: VisualizerHandle?,
+        source: VisualizerHandle,
         fft: ByteArray,
         onFftData: (ByteArray) -> Unit,
         onFailure: () -> Unit,
     ) {
-        if (synchronized(this) { visualizer !== source }) return
+        if (synchronized(lock) { visualizer !== source }) return
 
         try {
             onFftData(fft)
         } catch (_: RuntimeException) {
             val current =
-                synchronized(this) {
+                synchronized(lock) {
                     if (visualizer !== source) return
                     visualizer = null
                     source
@@ -135,8 +146,8 @@ constructor(
         }
     }
 
-    private fun requireSuccess(status: Int, operation: String) {
-        if (status != Visualizer.SUCCESS) throw SetupStageException(operation)
+    private fun requireSuccess(status: Int) {
+        if (status != Visualizer.SUCCESS) throw SetupStageException()
     }
 
     private fun VisualizerHandle.cleanup() {
@@ -145,7 +156,7 @@ constructor(
         runCatching { release() }
     }
 
-    private class SetupStageException(val stage: String) : IllegalStateException()
+    private class SetupStageException : IllegalStateException()
 
     private companion object {
         const val TAG = "PulseCapture"

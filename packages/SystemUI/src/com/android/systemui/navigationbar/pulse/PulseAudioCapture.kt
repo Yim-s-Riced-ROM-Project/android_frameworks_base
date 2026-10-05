@@ -20,7 +20,14 @@ package com.android.systemui.navigationbar.pulse
 interface PulseAudioCapture {
     /**
      * Starts capture on [requestedSessionId] when positive, falling back once to the output mix.
-     * [onFailure] is invoked once if every candidate fails to start.
+     *
+     * Returns true when capture is running after the call, and false when every candidate failed.
+     * While capture is already running this returns true and ignores [requestedSessionId]; to
+     * change session, call [stop] and then start again.
+     *
+     * [onFailure] is invoked at most once per start: synchronously, before this method returns
+     * false, when every candidate fails to start, or later from the capture thread if capture fails
+     * while running. It must be cheap and must not block.
      */
     fun start(
         requestedSessionId: Int?,
@@ -28,5 +35,6 @@ interface PulseAudioCapture {
         onFailure: () -> Unit,
     ): Boolean
 
+    /** Stops capture and releases the platform resources; safe to call when not running. */
     fun stop()
 }

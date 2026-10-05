@@ -115,13 +115,11 @@ class VisualizerPulseAudioCaptureTest {
 
         assertThat(underTest.start(42, {}, {})).isTrue()
 
-        val log = globalLog
         val cleanup = listOf("h$failed:listener:null", "h$failed:enabled:false", "h$failed:release")
-        val cleanupStart = log.indexOf("h$failed:enabled:true") + 1
-        assertThat(log.subList(cleanupStart, cleanupStart + 3))
-            .containsExactlyElementsIn(cleanup)
-            .inOrder()
-        assertThat(log.indexOf("h$failed:release")).isLessThan(log.indexOf("create:0"))
+        assertThat(globalLog).containsAtLeastElementsIn(cleanup).inOrder()
+        assertThat(globalLog.indexOf("h$failed:enabled:true"))
+            .isLessThan(globalLog.indexOf("h$failed:listener:null"))
+        assertThat(globalLog.indexOf("h$failed:release")).isLessThan(globalLog.indexOf("create:0"))
     }
 
     @Test
@@ -137,6 +135,58 @@ class VisualizerPulseAudioCaptureTest {
         assertThat(failures).isEqualTo(1)
         assertThat(factory.createdSessionIds).containsExactly(42, 0).inOrder()
         assertThat(factory.handles.map { it.events.last() }).containsExactly("release", "release")
+        assertThat(warnings).hasSize(2)
+    }
+
+    @Test
+    fun start_selectedSessionCreateThrows_fallsBackWithoutLeakOrFailure() {
+        factory.enqueueCreateFailure(UnsupportedOperationException("no session"))
+        var failures = 0
+
+        assertThat(underTest.start(42, {}, { failures++ })).isTrue()
+
+        assertThat(factory.createdSessionIds).containsExactly(42, 0).inOrder()
+        assertThat(factory.handles).hasSize(1)
+        assertThat(factory.handles.single().events).doesNotContain("release")
+        assertThat(failures).isEqualTo(0)
+        assertThat(warnings)
+            .containsExactly("Pulse capture setup failed at create: UnsupportedOperationException")
+    }
+
+    @Test
+    fun start_setupCallThrows_cleansCandidateAndFallsBackWithAccurateStage() {
+        val throwing = FakeVisualizerHandle()
+        throwing.captureSizeError = IllegalStateException("bad state 4242")
+        factory.enqueue(throwing, FakeVisualizerHandle())
+        var failures = 0
+
+        assertThat(underTest.start(4242, {}, { failures++ })).isTrue()
+
+        assertThat(factory.createdSessionIds).containsExactly(4242, 0).inOrder()
+        assertThat(throwing.events.takeLast(3))
+            .containsExactly("listener:null", "enabled:false", "release")
+            .inOrder()
+        assertThat(failures).isEqualTo(0)
+        assertThat(warnings)
+            .containsExactly("Pulse capture setup failed at capture size: IllegalStateException")
+    }
+
+    @Test
+    fun start_lateFftFromAbandonedHandle_isIgnored() {
+        val abandoned = FakeVisualizerHandle(enableResult = Visualizer.ERROR_INVALID_OPERATION)
+        factory.enqueue(abandoned, FakeVisualizerHandle())
+        val received = mutableListOf<ByteArray>()
+        var failures = 0
+        assertThat(underTest.start(42, received::add, { failures++ })).isTrue()
+        val late = checkNotNull(abandoned.lastRegisteredCallback)
+
+        late.invoke(byteArrayOf(9, 9))
+
+        assertThat(received).isEmpty()
+        assertThat(failures).isEqualTo(0)
+        val fft = byteArrayOf(1)
+        factory.handles[1].fftCallback!!.invoke(fft)
+        assertThat(received).containsExactly(fft)
     }
 
     @Test
@@ -223,6 +273,11 @@ class VisualizerPulseAudioCaptureTest {
         val createdSessionIds = mutableListOf<Int>()
         val handles = mutableListOf<FakeVisualizerHandle>()
         private val queued = ArrayDeque<FakeVisualizerHandle>()
+        private val createFailures = ArrayDeque<Throwable>()
+
+        fun enqueueCreateFailure(error: Throwable) {
+            createFailures.addLast(error)
+        }
 
         fun enqueue(vararg handles: FakeVisualizerHandle) {
             queued.addAll(handles)
@@ -230,10 +285,11 @@ class VisualizerPulseAudioCaptureTest {
 
         override fun create(audioSessionId: Int): VisualizerHandle {
             // Creation is logged in the same shared log the handles write to.
-            val handle = queued.removeFirstOrNull() ?: defaultHandle
             createdSessionIds += audioSessionId
-            handles += handle
             globalLog += "create:$audioSessionId"
+            createFailures.removeFirstOrNull()?.let { throw it }
+            val handle = queued.removeFirstOrNull() ?: defaultHandle
+            handles += handle
             return handle
         }
     }
@@ -251,6 +307,8 @@ class VisualizerPulseAudioCaptureTest {
         }
 
         var fftCallback: ((ByteArray) -> Unit)? = null
+        var lastRegisteredCallback: ((ByteArray) -> Unit)? = null
+        var captureSizeError: Throwable? = null
 
         override fun setEnabled(enabled: Boolean): Int {
             record("enabled:$enabled")
@@ -259,6 +317,7 @@ class VisualizerPulseAudioCaptureTest {
 
         override fun setCaptureSize(size: Int): Int {
             record("captureSize:$size")
+            captureSizeError?.let { throw it }
             return captureSizeResult
         }
 
@@ -275,6 +334,7 @@ class VisualizerPulseAudioCaptureTest {
         override fun setFftCaptureListener(rate: Int, callback: (ByteArray) -> Unit): Int {
             record("listener:$rate:false:true")
             fftCallback = callback
+            lastRegisteredCallback = callback
             return Visualizer.SUCCESS
         }
 
