@@ -506,6 +506,22 @@ class PulseControllerTest {
     }
 
     @Test
+    fun stop_clearsFailureLatchSoRestartCanActivate() {
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+        advanceTime(1_100)
+        assertThat(capture.requestedSessions).hasSize(1)
+
+        underTest.stop()
+        runMain()
+        underTest.start()
+        runMain()
+
+        assertThat(capture.requestedSessions).hasSize(2)
+        assertThat(capture.activeCount).isEqualTo(1)
+    }
+
+    @Test
     fun maxActiveVisualizers_remainsOne() {
         showOverlay()
 

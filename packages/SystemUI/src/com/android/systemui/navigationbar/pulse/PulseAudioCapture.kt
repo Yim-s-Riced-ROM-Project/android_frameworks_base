@@ -26,8 +26,8 @@ interface PulseAudioCapture {
      * change session, call [stop] and then start again.
      *
      * [onFailure] is invoked at most once per start: synchronously, before this method returns
-     * false, when every candidate fails to start, or later from the capture thread if capture fails
-     * while running. It must be cheap and must not block.
+     * false, when every candidate fails to start, or later from the Visualizer callback thread if
+     * capture fails while running. It must be cheap and must not block.
      */
     fun start(
         requestedSessionId: Int?,

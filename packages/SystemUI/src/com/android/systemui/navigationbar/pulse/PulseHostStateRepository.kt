@@ -20,7 +20,6 @@ import android.view.Display
 import com.android.app.displaylib.PerDisplayRepository
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
-import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,8 +40,10 @@ data class PulseHostState(
     val screenPinningActive: Boolean = false,
 )
 
-/** Per-display, source-aware state shared by Pulse hosts (navigation bar, taskbar). */
-@PerDisplaySingleton
+/**
+ * Per-display, source-aware state shared by Pulse hosts (navigation bar, taskbar). Scoped by its
+ * provider in PerDisplaySystemUIModule; it has no @Inject constructor.
+ */
 class PulseHostStateRepository {
     private val mutableState = MutableStateFlow(PulseHostState())
     val state: StateFlow<PulseHostState> = mutableState.asStateFlow()

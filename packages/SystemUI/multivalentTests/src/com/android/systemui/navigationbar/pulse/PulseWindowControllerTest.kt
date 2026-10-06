@@ -32,6 +32,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doNothing
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -186,6 +187,29 @@ class PulseWindowControllerTest : SysuiTestCase() {
         underTest.hide()
 
         verify(windowManager, times(1)).removeViewImmediate(view)
+        assertThat(underTest.show(48)).isTrue()
+        verify(windowManager, times(2)).addView(any(), any())
+    }
+
+    @Test
+    fun removeFailure_whileViewStillAttached_keepsWindowAndRetriesOnNextHide() {
+        underTest.show(48)
+        whenever(view.isAttachedToWindow).thenReturn(true)
+        doThrow(IllegalStateException()).whenever(windowManager).removeViewImmediate(any())
+
+        underTest.hide()
+
+        // Still attached: show() must not add a second time, and the next hide() retries removal.
+        assertThat(underTest.show(48)).isTrue()
+        verify(windowManager, times(1)).addView(any(), any())
+        underTest.hide()
+        verify(windowManager, times(2)).removeViewImmediate(view)
+
+        whenever(view.isAttachedToWindow).thenReturn(false)
+        doNothing().whenever(windowManager).removeViewImmediate(any())
+        underTest.hide()
+        underTest.hide()
+        verify(windowManager, times(3)).removeViewImmediate(view)
         assertThat(underTest.show(48)).isTrue()
         verify(windowManager, times(2)).addView(any(), any())
     }

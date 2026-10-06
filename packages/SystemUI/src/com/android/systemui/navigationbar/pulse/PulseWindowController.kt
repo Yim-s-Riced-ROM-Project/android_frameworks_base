@@ -87,13 +87,16 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
     fun hide() {
         if (!attached) return
         view.clear()
-        attached = false
-        layoutParams = null
         try {
             windowManager.removeViewImmediate(view)
         } catch (error: RuntimeException) {
             Log.w(TAG, "Unable to remove Pulse window: ${error.javaClass.simpleName}")
+            // If the view is still attached the window is orphaned: forgetting it would make the
+            // next show() fail with "already added". Stay attached so a later hide() retries.
+            if (view.isAttachedToWindow) return
         }
+        attached = false
+        layoutParams = null
     }
 
     fun onConfigurationChanged(): Boolean {

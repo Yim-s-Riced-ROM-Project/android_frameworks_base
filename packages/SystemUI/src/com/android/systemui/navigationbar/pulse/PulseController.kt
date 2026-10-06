@@ -46,7 +46,10 @@ import kotlinx.coroutines.launch
  *
  * Only the default display is active; other instances stay inert. [start] and [stop] may be called
  * from any thread. All runtime state below is confined to the main thread, except [captureEpoch]
- * and the frame mailbox, which are shared with the capture thread.
+ * and the frame mailbox, which are shared with whichever thread delivers FFT callbacks. In practice
+ * that is the main thread: Visualizer binds its event handler to the Looper of the thread that
+ * registers the listener, and [start] runs on main. The mailbox stays so the controller remains
+ * correct if callbacks ever arrive off-main; it is harmless otherwise.
  */
 @PerDisplaySingleton
 class PulseController
@@ -91,8 +94,9 @@ constructor(
     /** Incremented whenever capture starts or stops; callbacks from older epochs are dropped. */
     private val captureEpoch = AtomicInteger()
 
-    // Latest FFT frame handed from the capture thread to the main thread. Frames conflate, and the
-    // buffers are reused so steady-state capture does not allocate per frame.
+    // Latest FFT frame handed from the FFT callback thread (normally main, see class doc) to the
+    // main thread. Frames conflate, and the buffers are reused so steady-state capture does not
+    // allocate per frame.
     private val frameLock = Any()
     private var pendingFrame = ByteArray(0)
     private var pendingEpoch = 0
@@ -180,10 +184,17 @@ constructor(
         captureEpoch.incrementAndGet()
         audioCapture.stop()
         if (Looper.getMainLooper()?.isCurrentThread == true) {
-            stopRuntime()
+            teardown()
         } else {
-            mainExecutor.execute(::stopRuntime)
+            mainExecutor.execute(::teardown)
         }
+    }
+
+    /** Display lifecycle teardown: also clears the failure latch and the input snapshot. */
+    private fun teardown() {
+        activationFailed = false
+        lastInputs = null
+        stopRuntime()
     }
 
     private fun onConfigChanged(next: PulseConfig) {
@@ -274,7 +285,7 @@ constructor(
             }
     }
 
-    /** Capture thread: stores the frame and posts at most one delivery to the main thread. */
+    /** FFT callback thread: stores the frame and posts at most one delivery to the main thread. */
     private fun onCaptureFrame(epoch: Int, fft: ByteArray) {
         synchronized(frameLock) {
             if (epoch != captureEpoch.get()) return
