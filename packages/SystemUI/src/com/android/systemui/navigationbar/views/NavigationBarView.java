@@ -545,6 +545,10 @@ public class NavigationBarView extends FrameLayout {
         mScreenOn = isScreenOn;
     }
 
+    /**
+     * Reports this view's aggregated visibility to the owning {@link NavigationBar}, which
+     * publishes it as Pulse host state. The listener receives the current value immediately.
+     */
     public void setPulseVisibilityListener(@Nullable Consumer<Boolean> listener) {
         mPulseVisibilityListener = listener;
         if (listener != null) {

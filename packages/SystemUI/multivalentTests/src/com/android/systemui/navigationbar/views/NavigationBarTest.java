@@ -19,6 +19,9 @@ package com.android.systemui.navigationbar.views;
 import static android.app.StatusBarManager.NAVBAR_BACK_DISMISS_IME;
 import static android.app.StatusBarManager.NAVBAR_IME_SWITCHER_BUTTON_VISIBLE;
 import static android.app.StatusBarManager.NAVBAR_IME_VISIBLE;
+import static android.app.StatusBarManager.WINDOW_NAVIGATION_BAR;
+import static android.app.StatusBarManager.WINDOW_STATE_HIDDEN;
+import static android.app.StatusBarManager.WINDOW_STATE_SHOWING;
 import static android.inputmethodservice.InputMethodService.BACK_DISPOSITION_ADJUST_NOTHING;
 import static android.inputmethodservice.InputMethodService.BACK_DISPOSITION_DEFAULT;
 import static android.inputmethodservice.InputMethodService.IME_VISIBLE;
@@ -99,6 +102,10 @@ import com.android.systemui.navigationbar.NavBarHelper;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
+import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostState;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.views.buttons.DeadZone;
 import com.android.systemui.navigationbar.views.buttons.KeyButtonView;
@@ -146,6 +153,7 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 @RunWith(AndroidJUnit4.class)
 @RunWithLooper(setAsMainLooper = true)
@@ -162,6 +170,10 @@ public class NavigationBarTest extends SysuiTestCase {
     NavigationBarView mNavigationBarView;
     @Mock
     NavigationBarFrame mNavigationBarFrame;
+    @Mock
+    PulseHostStateRepositoryStore mPulseHostStateRepositoryStore;
+    private final PulseHostStateRepository mPulseHostStateRepository =
+            new PulseHostStateRepository();
     @Mock
     ButtonDispatcher mHomeButton;
     @Mock
@@ -261,6 +273,8 @@ public class NavigationBarTest extends SysuiTestCase {
     public void setup() throws Exception {
         MockitoAnnotations.initMocks(this);
         when(mLightBarControllerStore.forDisplay(anyInt())).thenReturn(mLightBarController);
+        when(mPulseHostStateRepositoryStore.forDisplay(DEFAULT_DISPLAY))
+                .thenReturn(mPulseHostStateRepository);
         when(mNavigationBarView.getHomeButton()).thenReturn(mHomeButton);
         when(mNavigationBarView.getRecentsButton()).thenReturn(mRecentsButton);
         when(mNavigationBarView.getAccessibilityButton()).thenReturn(mAccessibilityButton);
@@ -661,6 +675,79 @@ public class NavigationBarTest extends SysuiTestCase {
         verify(mMockSysUiState).setFlag(eq(SYSUI_STATE_SCREEN_PINNING), eq(true));
     }
 
+    @Test
+    public void testPulse_effectiveVisibilityRequiresWindowAndAggregateVisibility() {
+        Consumer<Boolean> aggregateListener = attachAsActivePulseHost();
+
+        aggregateListener.accept(true);
+        assertTrue(pulseState().getNavigationVisible());
+
+        mNavigationBar.setWindowState(DEFAULT_DISPLAY, WINDOW_NAVIGATION_BAR, WINDOW_STATE_HIDDEN);
+        assertFalse(pulseState().getNavigationVisible());
+
+        mNavigationBar.setWindowState(DEFAULT_DISPLAY, WINDOW_NAVIGATION_BAR, WINDOW_STATE_SHOWING);
+        assertTrue(pulseState().getNavigationVisible());
+
+        aggregateListener.accept(false);
+        assertFalse(pulseState().getNavigationVisible());
+    }
+
+    @Test
+    public void testPulse_screenPinningForwarded() {
+        attachAsActivePulseHost();
+
+        mTaskStackChangeListeners.getListenerImpl().onLockTaskModeChanged(
+                ActivityManager.LOCK_TASK_MODE_PINNED);
+        assertTrue(pulseState().getScreenPinningActive());
+
+        mTaskStackChangeListeners.getListenerImpl().onLockTaskModeChanged(
+                ActivityManager.LOCK_TASK_MODE_NONE);
+        assertFalse(pulseState().getScreenPinningActive());
+    }
+
+    @Test
+    public void testPulse_publishCurrentPulseState_republishesRetainedState() {
+        Consumer<Boolean> aggregateListener = attachAsActivePulseHost();
+        aggregateListener.accept(true);
+        mTaskStackChangeListeners.getListenerImpl().onLockTaskModeChanged(
+                ActivityManager.LOCK_TASK_MODE_PINNED);
+        // A host transition resets the repository to its defaults.
+        mPulseHostStateRepository.deactivate();
+        mPulseHostStateRepository.activate(PulseHost.NAVIGATION_BAR);
+        assertEquals(new PulseHostState(PulseHost.NAVIGATION_BAR, false, false), pulseState());
+
+        mNavigationBar.publishCurrentPulseState();
+
+        assertEquals(new PulseHostState(PulseHost.NAVIGATION_BAR, true, true), pulseState());
+    }
+
+    @Test
+    public void testPulse_initAndAttachDoNotActivateHost() {
+        mNavigationBar.init();
+        mNavigationBar.onViewAttached();
+
+        assertEquals(new PulseHostState(), pulseState());
+    }
+
+    @Test
+    public void testPulse_detachAndDestroyDoNotDeactivateHost() {
+        attachAsActivePulseHost();
+
+        mNavigationBar.onViewDetached();
+        mNavigationBar.destroyView();
+
+        assertEquals(PulseHost.NAVIGATION_BAR, pulseState().getActiveHost());
+    }
+
+    @Test
+    public void testPulse_secondaryDisplayPublishesToItsOwnDisplayOnly() {
+        mExternalDisplayNavigationBar.init();
+        mExternalDisplayNavigationBar.onViewAttached();
+        mExternalDisplayNavigationBar.publishCurrentPulseState();
+
+        verify(mPulseHostStateRepositoryStore, never()).forDisplay(DEFAULT_DISPLAY);
+    }
+
     private NavigationBar createNavBar(Context context) {
         DeviceProvisionedController deviceProvisionedController =
                 mock(DeviceProvisionedController.class);
@@ -709,7 +796,22 @@ public class NavigationBarTest extends SysuiTestCase {
                 mTaskStackChangeListeners,
                 new FakeDisplayTracker(mContext),
                 mNavBarButtonClickLogger,
-                mNavbarOrientationTrackingLogger));
+                mNavbarOrientationTrackingLogger,
+                mPulseHostStateRepositoryStore));
+    }
+
+    private Consumer<Boolean> attachAsActivePulseHost() {
+        mPulseHostStateRepository.activate(PulseHost.NAVIGATION_BAR);
+        mNavigationBar.init();
+        mNavigationBar.onViewAttached();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Consumer<Boolean>> captor = ArgumentCaptor.forClass(Consumer.class);
+        verify(mNavigationBarView).setPulseVisibilityListener(captor.capture());
+        return captor.getValue();
+    }
+
+    private PulseHostState pulseState() {
+        return mPulseHostStateRepository.getState().getValue();
     }
 
     private void processAllMessages() {

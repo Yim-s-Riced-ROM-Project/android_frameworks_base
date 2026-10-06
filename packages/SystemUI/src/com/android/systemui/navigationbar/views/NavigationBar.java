@@ -124,6 +124,9 @@ import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.navigationbar.NavigationModeController.ModeChangedListener;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.navigationbar.gestural.QuickswitchOrientedNavHandle;
+import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.navigationbar.views.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.views.buttons.DeadZone;
 import com.android.systemui.navigationbar.views.buttons.KeyButtonView;
@@ -229,6 +232,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
     private final UserContextProvider mUserContextProvider;
     private final WakefulnessLifecycle mWakefulnessLifecycle;
     private final DisplayTracker mDisplayTracker;
+    private final PulseHostStateRepositoryStore mPulseHostStateRepositoryStore;
     private final RegionSamplingHelper mRegionSamplingHelper;
     private final int mNavColorSampleMargin;
     private EdgeBackGestureHandler mEdgeBackGestureHandler;
@@ -536,6 +540,9 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             };
 
     private boolean mScreenPinningActive = false;
+    /** Retained Pulse host inputs; effective visibility needs both. */
+    private boolean mPulseWindowVisible;
+    private boolean mPulseAggregateVisible;
     private final TaskStackChangeListener mTaskStackListener = new TaskStackChangeListener() {
         @Override
         public void onLockTaskModeChanged(int mode) {
@@ -544,6 +551,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
                     .commitUpdate(mDisplayId);
             mView.setInScreenPinning(mScreenPinningActive);
             updateScreenPinningGestures();
+            publishPulseState();
         }
     };
 
@@ -592,7 +600,8 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             TaskStackChangeListeners taskStackChangeListeners,
             DisplayTracker displayTracker,
             NavBarButtonClickLogger navBarButtonClickLogger,
-            NavbarOrientationTrackingLogger navbarOrientationTrackingLogger) {
+            NavbarOrientationTrackingLogger navbarOrientationTrackingLogger,
+            PulseHostStateRepositoryStore pulseHostStateRepositoryStore) {
         super(navigationBarView);
         mFrame = navigationBarFrame;
         mContext = context;
@@ -635,6 +644,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         mEdgeBackGestureHandler = navBarHelper.getEdgeBackGestureHandler();
         mNavBarButtonClickLogger = navBarButtonClickLogger;
         mNavbarOrientationTrackingLogger = navbarOrientationTrackingLogger;
+        mPulseHostStateRepositoryStore = pulseHostStateRepositoryStore;
 
         mNavColorSampleMargin = getResources()
                 .getDimensionPixelSize(R.dimen.navigation_handle_sample_horizontal_margin);
@@ -815,6 +825,7 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
             getBarTransitions().getLightTransitionsController().restoreState(mSavedState);
         }
         setWindowVisible(isNavBarWindowVisible());
+        mView.setPulseVisibilityListener(this::onPulseAggregateVisibilityChanged);
         mView.setBehavior(mBehavior);
         setNavBarMode(mNavBarMode);
         repositionNavigationBar(mCurrentRotation);
@@ -870,6 +881,8 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
 
     @Override
     public void onViewDetached() {
+        mView.setPulseVisibilityListener(null);
+        onPulseAggregateVisibilityChanged(false);
         mView.setUpdateActiveTouchRegionsCallback(null);
         getBarTransitions().destroy();
         mLauncherProxyService.removeCallback(mLauncherProxyListener);
@@ -1700,6 +1713,33 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
     private void setWindowVisible(boolean visible) {
         mRegionSamplingHelper.setWindowVisible(visible);
         mView.setWindowVisible(visible);
+        mPulseWindowVisible = visible;
+        publishPulseState();
+    }
+
+    private void onPulseAggregateVisibilityChanged(boolean visible) {
+        mPulseAggregateVisible = visible;
+        publishPulseState();
+    }
+
+    /**
+     * Republishes the retained Pulse host state. {@link
+     * com.android.systemui.navigationbar.NavigationBarControllerImpl} calls this after making this
+     * navigation bar the active Pulse host; updates are ignored while it is not the active host.
+     */
+    public void publishCurrentPulseState() {
+        publishPulseState();
+    }
+
+    private void publishPulseState() {
+        PulseHostStateRepository repository =
+                mPulseHostStateRepositoryStore.forDisplay(mDisplayId);
+        if (repository == null) {
+            return;
+        }
+        repository.updateNavigationVisible(PulseHost.NAVIGATION_BAR,
+                mPulseWindowVisible && mPulseAggregateVisible);
+        repository.updateScreenPinning(PulseHost.NAVIGATION_BAR, mScreenPinningActive);
     }
 
     /** Sets {@link AutoHideController} to the navigation bar. */

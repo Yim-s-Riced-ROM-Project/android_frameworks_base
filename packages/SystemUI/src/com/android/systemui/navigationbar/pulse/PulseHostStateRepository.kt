@@ -16,6 +16,7 @@
 
 package com.android.systemui.navigationbar.pulse
 
+import android.view.Display
 import com.android.app.displaylib.PerDisplayRepository
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
@@ -75,12 +76,28 @@ class PulseHostStateRepository {
         source != PulseHost.NONE && activeHost == source
 }
 
-/** Gives SysUI-scoped hosts (navigation bar, taskbar) access to each display's host state. */
+/**
+ * Gives SysUI-scoped hosts (navigation bar, taskbar) access to the default display's host state.
+ *
+ * Pulse runs only on the default display, so other displays get null. This also keeps
+ * [PerDisplayRepository.get] from creating a whole display component for a secondary display as a
+ * side effect of a host callback. The default display's component lives as long as the process, so
+ * its repository is cached after the first successful lookup.
+ */
 @SysUISingleton
 class PulseHostStateRepositoryStore
 @Inject
 constructor(private val displayComponents: PerDisplayRepository<SystemUIDisplaySubcomponent>) {
-    /** Returns null when the display no longer exists. */
-    fun forDisplay(displayId: Int): PulseHostStateRepository? =
-        displayComponents[displayId]?.pulseHostStateRepository
+    @Volatile private var defaultDisplayRepository: PulseHostStateRepository? = null
+
+    /** Returns null for non-default displays, or while the default display is unavailable. */
+    fun forDisplay(displayId: Int): PulseHostStateRepository? {
+        if (displayId != Display.DEFAULT_DISPLAY) return null
+        defaultDisplayRepository?.let {
+            return it
+        }
+        return displayComponents[displayId]?.pulseHostStateRepository?.also {
+            defaultDisplayRepository = it
+        }
+    }
 }

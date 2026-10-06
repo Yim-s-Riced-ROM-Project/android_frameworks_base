@@ -69,6 +69,9 @@ import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
+import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.shared.recents.utilities.Utilities;
@@ -143,11 +146,14 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
     private final DisplayManager mDisplayManager;
     private Context mWindowContext;
     private ScreenPinningNotify mScreenPinningNotify;
+    private boolean mScreenPinningActive;
     private final TaskStackChangeListener mTaskStackListener = new TaskStackChangeListener() {
         @Override
         public void onLockTaskModeChanged(int mode) {
-            mSysUiState.setFlag(SYSUI_STATE_SCREEN_PINNING, mode == LOCK_TASK_MODE_PINNED)
+            mScreenPinningActive = mode == LOCK_TASK_MODE_PINNED;
+            mSysUiState.setFlag(SYSUI_STATE_SCREEN_PINNING, mScreenPinningActive)
                     .commitUpdate(mDefaultDisplayId);
+            publishCurrentPulseState();
         }
     };
 
@@ -187,14 +193,17 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
     private final StatusBarStateController mStatusBarStateController;
     private DisplayTracker mDisplayTracker;
     private final Handler mBgHandler;
+    private final PulseHostStateRepositoryStore mPulseHostStateRepositoryStore;
 
     @Inject
     public TaskbarDelegate(Context context,
             LightBarTransitionsController.Factory lightBarTransitionsControllerFactory,
             StatusBarKeyguardViewManager statusBarKeyguardViewManager,
             StatusBarStateController statusBarStateController,
-            @Background Handler bgHandler) {
+            @Background Handler bgHandler,
+            PulseHostStateRepositoryStore pulseHostStateRepositoryStore) {
         mLightBarTransitionsControllerFactory = lightBarTransitionsControllerFactory;
+        mPulseHostStateRepositoryStore = pulseHostStateRepositoryStore;
 
         mContext = context;
         mBgHandler = bgHandler;
@@ -309,6 +318,8 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
             }
             mDefaultDisplayId = displayId;
             parseCurrentSysuiState();
+            mScreenPinningActive =
+                    (mSysUiState.getFlags() & SYSUI_STATE_SCREEN_PINNING) != 0;
             mCommandQueue.addCallback(this);
             mLauncherProxyService.addCallback(this);
             onNavigationModeChanged(mNavigationModeController.addListener(this));
@@ -526,7 +537,35 @@ public class TaskbarDelegate implements CommandQueue.Callbacks,
                 && mTaskBarWindowState != state) {
             mTaskBarWindowState = state;
             updateSysuiFlags();
+            publishCurrentPulseState();
         }
+    }
+
+    /**
+     * Launcher Taskbar visibility. Stashing is not immersive hiding, so this never overrides the
+     * navigation window state; it only republishes the retained Pulse host state.
+     */
+    @Override
+    public void onTaskbarStatusUpdated(boolean visible, boolean stashed) {
+        publishCurrentPulseState();
+    }
+
+    /**
+     * Publishes the authoritative navigation window and screen-pinning state as Pulse host state.
+     * {@link NavigationBarControllerImpl} calls this after making Taskbar the active Pulse host;
+     * updates are ignored while Taskbar is not the active host.
+     */
+    public void publishCurrentPulseState() {
+        if (!mInitialized) {
+            return;
+        }
+        PulseHostStateRepository repository =
+                mPulseHostStateRepositoryStore.forDisplay(mDefaultDisplayId);
+        if (repository == null) {
+            return;
+        }
+        repository.updateNavigationVisible(PulseHost.TASKBAR, isWindowVisible());
+        repository.updateScreenPinning(PulseHost.TASKBAR, mScreenPinningActive);
     }
 
     @Override

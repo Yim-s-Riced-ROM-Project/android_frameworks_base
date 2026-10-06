@@ -34,10 +34,12 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.hardware.devicestate.DeviceStateManager;
 import android.util.SparseArray;
@@ -52,6 +54,9 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.navigationbar.views.NavigationBar;
 import com.android.systemui.settings.FakeDisplayTracker;
 import com.android.systemui.shared.recents.utilities.Utilities;
@@ -72,6 +77,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -105,10 +112,20 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
     TaskbarDelegate mTaskbarDelegate;
     @Mock
     private DeviceStateManager mDeviceStateManager;
+    @Mock
+    private PulseHostStateRepositoryStore mPulseHostStateRepositoryStore;
+    @Mock
+    private PulseHostStateRepository mDefaultPulseHostStateRepository;
+    @Mock
+    private PulseHostStateRepository mSecondaryPulseHostStateRepository;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
+        when(mPulseHostStateRepositoryStore.forDisplay(DEFAULT_DISPLAY))
+                .thenReturn(mDefaultPulseHostStateRepository);
+        when(mPulseHostStateRepositoryStore.forDisplay(SECONDARY_DISPLAY))
+                .thenReturn(mSecondaryPulseHostStateRepository);
         mNavigationBarController = spy(
                 new NavigationBarControllerImpl(mContext,
                         mock(LauncherProxyService.class),
@@ -130,7 +147,8 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
                         mDisplayTracker,
                         mDeviceStateManager,
                         mock(DisplaysWithDecorationsRepositoryCompat.class),
-                        mock(CoroutineDispatcher.class)));
+                        mock(CoroutineDispatcher.class),
+                        mPulseHostStateRepositoryStore));
         initializeNavigationBars();
         mMockitoSession = mockitoSession().mockStatic(Utilities.class).startMocking();
     }
@@ -336,5 +354,93 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
         mNavigationBarController.mIsLargeScreen = false;
         mNavigationBarController.mIsPhone = false;
         assertTrue(mNavigationBarController.supportsTaskbar());
+    }
+
+    @Test
+    public void testPulseHost_taskbarActivation_deactivatesBeforeReplacingNavigationBar() {
+        mNavigationBarController.mIsLargeScreen = true;
+        doReturn(true).when(mNavigationBarController).canCreateNavBarOrTaskBar(DEFAULT_DISPLAY);
+        when(mTaskbarDelegate.isInitialized()).thenReturn(false);
+
+        mNavigationBarController.createNavigationBar(mContext.getDisplay(), null, null);
+
+        InOrder inOrder = inOrder(
+                mDefaultPulseHostStateRepository, mDefaultNavBar, mTaskbarDelegate);
+        inOrder.verify(mDefaultPulseHostStateRepository).deactivate();
+        inOrder.verify(mDefaultNavBar).destroyView();
+        inOrder.verify(mTaskbarDelegate).init(DEFAULT_DISPLAY);
+        inOrder.verify(mDefaultPulseHostStateRepository).activate(PulseHost.TASKBAR);
+        inOrder.verify(mTaskbarDelegate).publishCurrentPulseState();
+        verify(mNavigationBarController.mNavigationBars).remove(DEFAULT_DISPLAY);
+    }
+
+    @Test
+    public void testPulseHost_taskbarAlreadyActive_keepsHostActive() {
+        mNavigationBarController.mIsLargeScreen = true;
+        doReturn(true).when(mNavigationBarController).canCreateNavBarOrTaskBar(DEFAULT_DISPLAY);
+        doReturn(null).when(mNavigationBarController.mNavigationBars).get(DEFAULT_DISPLAY);
+        when(mTaskbarDelegate.isInitialized()).thenReturn(true);
+
+        mNavigationBarController.createNavigationBar(mContext.getDisplay(), null, null);
+
+        verify(mDefaultPulseHostStateRepository, never()).deactivate();
+        verify(mDefaultPulseHostStateRepository, never()).activate(any());
+    }
+
+    @Test
+    public void testPulseHost_navigationBarActivation_deactivatesBeforeReplacingTaskbar() {
+        assumeFalse(enableTaskbarOnPhones());
+        mNavigationBarController.mIsLargeScreen = false;
+        mNavigationBarController.mIsPhone = true;
+        doReturn(true).when(mNavigationBarController).canCreateNavBarOrTaskBar(DEFAULT_DISPLAY);
+        when(mTaskbarDelegate.isInitialized()).thenReturn(true);
+        NavigationBarComponent component = mock(NavigationBarComponent.class);
+        NavigationBar replacement = mock(NavigationBar.class);
+        when(mNavigationBarFactory.create(any(), any())).thenReturn(component);
+        when(component.getNavigationBar()).thenReturn(replacement);
+
+        mNavigationBarController.createNavigationBar(mContext.getDisplay(), null, null);
+
+        InOrder inOrder = inOrder(mDefaultPulseHostStateRepository, mTaskbarDelegate,
+                replacement, mNavigationBarController.mNavigationBars);
+        inOrder.verify(mDefaultPulseHostStateRepository).deactivate();
+        inOrder.verify(mTaskbarDelegate).destroy();
+        inOrder.verify(replacement).init();
+        inOrder.verify(mNavigationBarController.mNavigationBars).put(DEFAULT_DISPLAY, replacement);
+        inOrder.verify(mDefaultPulseHostStateRepository).activate(PulseHost.NAVIGATION_BAR);
+        inOrder.verify(replacement).publishCurrentPulseState();
+    }
+
+    @Test
+    public void testPulseHost_removeNavigationBar_deactivatesBeforeDestroy() {
+        mNavigationBarController.removeNavigationBar(DEFAULT_DISPLAY);
+
+        InOrder inOrder = inOrder(mDefaultPulseHostStateRepository, mDefaultNavBar);
+        inOrder.verify(mDefaultPulseHostStateRepository).deactivate();
+        inOrder.verify(mDefaultNavBar).destroyView();
+        verify(mDefaultPulseHostStateRepository, never()).activate(any());
+    }
+
+    @Test
+    public void testPulseHost_removeMissingNavigationBar_leavesHostUntouched() {
+        doReturn(null).when(mNavigationBarController.mNavigationBars).get(DEFAULT_DISPLAY);
+
+        mNavigationBarController.removeNavigationBar(DEFAULT_DISPLAY);
+
+        verify(mDefaultPulseHostStateRepository, never()).deactivate();
+    }
+
+    @Test
+    public void testPulseHost_displayRemoved_deactivatesThatDisplayOnly() {
+        ArgumentCaptor<CommandQueue.Callbacks> callbacks =
+                ArgumentCaptor.forClass(CommandQueue.Callbacks.class);
+        verify(mCommandQueue).addCallback(callbacks.capture());
+
+        callbacks.getValue().onDisplayRemoved(SECONDARY_DISPLAY);
+
+        InOrder inOrder = inOrder(mSecondaryPulseHostStateRepository, mSecondaryNavBar);
+        inOrder.verify(mSecondaryPulseHostStateRepository).deactivate();
+        inOrder.verify(mSecondaryNavBar).destroyView();
+        verify(mDefaultPulseHostStateRepository, never()).deactivate();
     }
 }

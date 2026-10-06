@@ -53,6 +53,9 @@ import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.display.flags.WmCallbackForSysDecorFlag;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.navigationbar.views.NavigationBar;
 import com.android.systemui.navigationbar.views.NavigationBarView;
 import com.android.systemui.settings.DisplayTracker;
@@ -93,6 +96,7 @@ public class NavigationBarControllerImpl implements
     private final DisplayManager mDisplayManager;
     private final TaskbarDelegate mTaskbarDelegate;
     private final NavBarHelper mNavBarHelper;
+    private final PulseHostStateRepositoryStore mPulseHostStateRepositoryStore;
     private int mNavMode;
     /**
      * Indicates whether the active display is a large screen, e.g. tablets, foldable devices in
@@ -138,8 +142,10 @@ public class NavigationBarControllerImpl implements
             DisplayTracker displayTracker,
             DeviceStateManager deviceStateManager,
             DisplaysWithDecorationsRepositoryCompat displaysWithDecorationsRepositoryCompat,
-            @Main CoroutineDispatcher mainCoroutineDispatcher) {
+            @Main CoroutineDispatcher mainCoroutineDispatcher,
+            PulseHostStateRepositoryStore pulseHostStateRepositoryStore) {
         mContext = context;
+        mPulseHostStateRepositoryStore = pulseHostStateRepositoryStore;
         mExecutor = mainExecutor;
         mNavigationBarComponentFactory = navigationBarComponentFactory;
         mSecureSettings = secureSettings;
@@ -274,16 +280,48 @@ public class NavigationBarControllerImpl implements
             Trace.beginSection("NavigationBarController#initializeTaskbarIfNecessary");
             // Hint to NavBarHelper if we are replacing an existing bar to skip extra work
             mNavBarHelper.setTogglingNavbarTaskbar(mNavigationBars.contains(displayId));
+            // An already active Taskbar stays the Pulse host; anything else is a host transition.
+            final boolean pulseHostChanging = !mTaskbarDelegate.isInitialized()
+                    || mNavigationBars.get(displayId) != null;
+            if (pulseHostChanging) {
+                deactivatePulseHost(displayId);
+            }
             // Remove navigation bar when taskbar is showing
-            removeNavigationBar(displayId);
+            removeNavigationBarInternal(displayId);
             mTaskbarDelegate.init(displayId);
+            if (pulseHostChanging) {
+                activatePulseHost(displayId, PulseHost.TASKBAR);
+                mTaskbarDelegate.publishCurrentPulseState();
+            }
             mNavBarHelper.setTogglingNavbarTaskbar(false);
             Trace.endSection();
 
         } else {
+            if (mTaskbarDelegate.isInitialized()) {
+                deactivatePulseHost(displayId);
+            }
             mTaskbarDelegate.destroy();
         }
         return taskbarEnabled;
+    }
+
+    /**
+     * Stops Pulse on {@code displayId} before its navigation host is destroyed or replaced. The
+     * replacement host is initialized while no host is active, so its initial callbacks are
+     * ignored until {@link #activatePulseHost} and an explicit republish.
+     */
+    private void deactivatePulseHost(int displayId) {
+        PulseHostStateRepository repository = mPulseHostStateRepositoryStore.forDisplay(displayId);
+        if (repository != null) {
+            repository.deactivate();
+        }
+    }
+
+    private void activatePulseHost(int displayId, PulseHost host) {
+        PulseHostStateRepository repository = mPulseHostStateRepositoryStore.forDisplay(displayId);
+        if (repository != null) {
+            repository.activate(host);
+        }
     }
 
     @VisibleForTesting
@@ -437,6 +475,8 @@ public class NavigationBarControllerImpl implements
         NavigationBar navBar = component.getNavigationBar();
         navBar.init();
         mNavigationBars.put(displayId, navBar);
+        activatePulseHost(displayId, PulseHost.NAVIGATION_BAR);
+        navBar.publishCurrentPulseState();
 
         navBar.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
@@ -456,6 +496,14 @@ public class NavigationBarControllerImpl implements
 
     @Override
     public void removeNavigationBar(int displayId) {
+        if (mNavigationBars.get(displayId) != null) {
+            deactivatePulseHost(displayId);
+        }
+        removeNavigationBarInternal(displayId);
+    }
+
+    /** Callers must deactivate the Pulse host first. */
+    private void removeNavigationBarInternal(int displayId) {
         NavigationBar navBar = mNavigationBars.get(displayId);
         if (navBar != null) {
             navBar.destroyView();
