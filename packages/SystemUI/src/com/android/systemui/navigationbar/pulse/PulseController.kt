@@ -21,12 +21,14 @@ import android.os.Looper
 import android.util.Log
 import android.view.Display
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayId
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
+import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
+import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.time.SystemClock
@@ -62,7 +64,7 @@ constructor(
     private val frameGate: PulseFrameGate,
     private val spectrumProcessor: PulseSpectrumProcessor,
     private val windowController: PulseWindowController,
-    private val deviceEntryInteractor: DeviceEntryInteractor,
+    private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
     private val powerInteractor: PowerInteractor,
     private val batteryController: BatteryController,
     private val userTracker: UserTracker,
@@ -157,10 +159,14 @@ constructor(
                     }
                 }
                 launch {
-                    deviceEntryInteractor.isDeviceEntered.collectLatest {
-                        deviceEntered = it
-                        recompute()
-                    }
+                    // Device entry is scene-container only; this also covers the legacy keyguard.
+                    // Lockscreen, AOD and keyguard-occluding activities are not GONE.
+                    keyguardTransitionInteractor
+                        .isFinishedIn(Scenes.Gone, KeyguardState.GONE)
+                        .collectLatest {
+                            deviceEntered = it
+                            recompute()
+                        }
                 }
                 launch {
                     powerInteractor.isAwake.collectLatest {

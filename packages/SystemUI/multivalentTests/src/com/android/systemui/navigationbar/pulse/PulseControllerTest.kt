@@ -17,8 +17,10 @@
 package com.android.systemui.navigationbar.pulse
 
 import android.content.Context
-import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
+import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
+import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.time.SystemClock
@@ -59,7 +61,7 @@ class PulseControllerTest {
     private val settings =
         MutableStateFlow(PulseConfig(enabled = true, color = COLOR, heightDp = 64))
     private val playback = MutableStateFlow(PulsePlaybackTarget(active = true, sessionId = SESSION))
-    private val deviceEntered = MutableStateFlow(true)
+    private val keyguardGone = MutableStateFlow(true)
     private val awake = MutableStateFlow(true)
     private val hostState = PulseHostStateRepository()
     private val capture = FakePulseAudioCapture()
@@ -67,7 +69,7 @@ class PulseControllerTest {
     private val settingsRepository = mock<PulseSettingsRepository>()
     private val playbackRepository = mock<PulsePlaybackRepository>()
     private val windowController = mock<PulseWindowController>()
-    private val deviceEntryInteractor = mock<DeviceEntryInteractor>()
+    private val keyguardTransitionInteractor = mock<KeyguardTransitionInteractor>()
     private val powerInteractor = mock<PowerInteractor>()
     private val batteryController = mock<BatteryController>()
     private val userTracker = mock<UserTracker>()
@@ -79,7 +81,8 @@ class PulseControllerTest {
     fun setUp() {
         whenever(settingsRepository.config).thenReturn(settings)
         whenever(playbackRepository.target).thenReturn(playback)
-        whenever(deviceEntryInteractor.isDeviceEntered).thenReturn(deviceEntered)
+        whenever(keyguardTransitionInteractor.isFinishedIn(Scenes.Gone, KeyguardState.GONE))
+            .thenReturn(keyguardGone)
         whenever(powerInteractor.isAwake).thenReturn(awake)
         whenever(batteryController.isPowerSave).thenReturn(false)
         whenever(systemClock.elapsedRealtime()).thenAnswer { scheduler.currentTime }
@@ -122,6 +125,22 @@ class PulseControllerTest {
         activateHost(PulseHost.TASKBAR)
 
         startController()
+
+        assertThat(capture.requestedSessions).containsExactly(SESSION)
+        assertThat(capture.activeCount).isEqualTo(1)
+    }
+
+    @Test
+    fun keyguardGone_withoutSceneContainer_startsCapture() {
+        // Without the scene container DeviceEntryInteractor.isDeviceEntered never leaves its
+        // initial false, so eligibility must come from the keyguard transition state instead.
+        keyguardGone.value = false
+        activateHost(PulseHost.TASKBAR)
+        startController()
+        assertThat(capture.requestedSessions).isEmpty()
+
+        keyguardGone.value = true
+        runMain()
 
         assertThat(capture.requestedSessions).containsExactly(SESSION)
         assertThat(capture.activeCount).isEqualTo(1)
@@ -391,7 +410,7 @@ class PulseControllerTest {
                     { on ->
                         hostState.updateScreenPinning(PulseHost.NAVIGATION_BAR, on)
                     },
-                "locked" to { on -> deviceEntered.value = !on },
+                "keyguard not gone" to { on -> keyguardGone.value = !on },
                 "asleep" to { on -> awake.value = !on },
                 "battery saver" to { on -> batteryCallback.onPowerSaveChanged(on) },
                 "playback stopped" to
@@ -548,7 +567,7 @@ class PulseControllerTest {
             PulseFrameGate(),
             PulseSpectrumProcessor(),
             windowController,
-            deviceEntryInteractor,
+            keyguardTransitionInteractor,
             powerInteractor,
             batteryController,
             userTracker,
