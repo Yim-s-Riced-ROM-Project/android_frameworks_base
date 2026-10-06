@@ -47,7 +47,7 @@ class PulseHostStateRepositoryTest {
         assertThat(underTest.state.value).isEqualTo(PulseHostState(activeHost = PulseHost.TASKBAR))
     }
 
-    @Test(expected = IllegalArgumentException::class)
+    @Test(expected = java.lang.IllegalArgumentException::class)
     fun activate_none_isRejected() {
         underTest.activate(PulseHost.NONE)
     }
