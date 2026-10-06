@@ -17,8 +17,12 @@
 package com.android.systemui.navigationbar.pulse
 
 import android.content.Context
+import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.LogMessageImpl
+import com.android.systemui.log.core.LogMessage
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.settings.UserTracker
@@ -26,6 +30,8 @@ import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.time.SystemClock
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.util.concurrent.Executor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -38,9 +44,13 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.clearInvocations
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doThrow
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -74,6 +84,9 @@ class PulseControllerTest {
     private val batteryController = mock<BatteryController>()
     private val userTracker = mock<UserTracker>()
     private val systemClock = mock<SystemClock>()
+    private val dumpManager = mock<DumpManager>()
+    private val logBuffer = mock<LogBuffer>()
+    private val loggedMessages = mutableListOf<String>()
 
     private lateinit var underTest: PulseController
 
@@ -88,6 +101,24 @@ class PulseControllerTest {
         whenever(systemClock.elapsedRealtime()).thenAnswer { scheduler.currentTime }
         whenever(windowController.show(any())).thenReturn(true)
         whenever(windowController.updateHeight(any())).thenReturn(true)
+        // LogBuffer.dump needs android.icu (unavailable on the plain JVM): record printed messages.
+        whenever(logBuffer.obtain(any(), any(), any(), anyOrNull())).thenAnswer {
+            LogMessageImpl.create().apply {
+                reset(
+                    it.getArgument(0),
+                    it.getArgument(1),
+                    0L,
+                    it.getArgument(2),
+                    it.getArgument(3),
+                )
+            }
+        }
+        doAnswer {
+                val message = it.getArgument<LogMessage>(0)
+                loggedMessages += message.messagePrinter(message)
+            }
+            .whenever(logBuffer)
+            .commit(any())
         underTest = createController(displayId = 0)
     }
 
@@ -131,9 +162,9 @@ class PulseControllerTest {
     }
 
     @Test
-    fun keyguardGone_withoutSceneContainer_startsCapture() {
-        // Without the scene container DeviceEntryInteractor.isDeviceEntered never leaves its
-        // initial false, so eligibility must come from the keyguard transition state instead.
+    fun keyguardGone_startsCapture() {
+        // Eligibility follows the keyguard transition state (mocked here), not
+        // DeviceEntryInteractor.isDeviceEntered, which only emits with the scene container.
         keyguardGone.value = false
         activateHost(PulseHost.TASKBAR)
         startController()
@@ -558,6 +589,136 @@ class PulseControllerTest {
         assertThat(capture.activeCount).isEqualTo(1)
     }
 
+    @Test
+    fun start_registersDumpable_stopUnregisters() {
+        startController()
+        verify(dumpManager).registerNormalDumpable("PulseController", underTest)
+
+        underTest.stop()
+
+        verify(dumpManager).unregisterDumpable("PulseController")
+    }
+
+    @Test
+    fun secondaryDisplay_doesNotRegisterDumpable() {
+        createController(displayId = 1).start()
+        runMain()
+
+        verify(dumpManager, never()).registerNormalDumpable(any(), any())
+    }
+
+    @Test
+    fun duplicateDumpableName_doesNotBreakStartOrUnregisterOwner() {
+        doThrow(IllegalArgumentException("'PulseController' is already registered"))
+            .whenever(dumpManager)
+            .registerNormalDumpable(eq("PulseController"), any())
+        activateHost(PulseHost.NAVIGATION_BAR)
+
+        startController()
+        underTest.stop()
+
+        assertThat(capture.requestedSessions).containsExactly(SESSION)
+        verify(dumpManager, never()).unregisterDumpable(any())
+    }
+
+    @Test
+    fun dump_listsEveryGateAndRuntimeState() {
+        showOverlay()
+
+        val dump = dump()
+
+        for (name in DUMP_FIELDS) {
+            assertWithMessage(name).that(dump).containsMatch("(?m)^$name=")
+        }
+        assertThat(dump).contains("eligible=true\n")
+        assertThat(dump).contains("blockedBy=none\n")
+        assertThat(dump).contains("captureActive=true\n")
+        assertThat(dump).contains("frameGateReady=true\n")
+        assertThat(dump).contains("overlayShown=true\n")
+    }
+
+    @Test
+    fun dump_reportsFirstFalseGate() {
+        playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+
+        val dump = dump()
+
+        assertThat(dump).contains("playbackActive=false\n")
+        assertThat(dump).contains("eligible=false\n")
+        assertThat(dump).contains("blockedBy=playbackActive\n")
+        assertThat(dump).contains("captureActive=false\n")
+    }
+
+    @Test
+    fun dump_reportsKeyguardGoneGate() {
+        keyguardGone.value = false
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+
+        assertThat(dump()).contains("blockedBy=keyguardGone\n")
+    }
+
+    @Test
+    fun dump_reportsFailureLatch() {
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+        advanceTime(1_100)
+
+        val dump = dump()
+
+        assertThat(dump).contains("activationFailed=true\n")
+        assertThat(dump).contains("blockedBy=activationFailed\n")
+    }
+
+    @Test
+    fun dump_neverContainsSessionId() {
+        showOverlay()
+
+        val dump = dump()
+
+        assertThat(dump).contains("sessionSelected=true\n")
+        assertThat(dump).doesNotContain(SESSION.toString())
+    }
+
+    @Test
+    fun logBuffer_recordsTransitionsWithoutSessionId() {
+        playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+        playback.value = PulsePlaybackTarget(active = true, sessionId = SESSION)
+        runMain()
+        makeReady()
+        advanceTime(2_100)
+
+        val messages = logMessages()
+        val log = messages.joinToString("\n")
+
+        assertThat(log).contains("eligible=false blockedBy=playbackActive")
+        assertThat(log).contains("eligible=true blockedBy=none")
+        assertThat(log).contains("capture started selected=true")
+        assertThat(log).contains("overlay shown")
+        assertThat(log).contains("failed stage=silence timeout")
+        assertThat(log).contains("capture stopped")
+        for (message in messages) assertThat(message).doesNotContain(SESSION.toString())
+    }
+
+    @Test
+    fun logBuffer_doesNotLogPerFrame() {
+        showOverlay()
+        val before = logMessages().size
+
+        repeat(20) { emitFrame(validFft()) }
+
+        assertThat(logMessages()).hasSize(before)
+    }
+
+    private fun dump(): String =
+        StringWriter().also { underTest.dump(PrintWriter(it), emptyArray()) }.toString()
+
+    private fun logMessages(): List<String> = loggedMessages.toList()
+
     private fun createController(displayId: Int) =
         PulseController(
             settingsRepository,
@@ -572,6 +733,8 @@ class PulseControllerTest {
             batteryController,
             userTracker,
             systemClock,
+            dumpManager,
+            logBuffer,
             displayId,
             displayScope,
             mainDispatcher,
@@ -693,5 +856,27 @@ class PulseControllerTest {
         const val COLOR = 0x123456
         const val SESSION = 42
         const val FFT_SIZE = 512
+        val DUMP_FIELDS =
+            listOf(
+                "started",
+                "displayId",
+                "enabled",
+                "activeHost",
+                "navigationVisible",
+                "screenPinningActive",
+                "keyguardGone",
+                "awake",
+                "powerSave",
+                "playbackActive",
+                "sessionSelected",
+                "activationFailed",
+                "eligible",
+                "blockedBy",
+                "captureActive",
+                "captureEpoch",
+                "frameGateReady",
+                "overlayShown",
+                "windowAttached",
+            )
     }
 }

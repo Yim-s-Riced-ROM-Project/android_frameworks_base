@@ -20,18 +20,24 @@ import android.content.Context
 import android.os.Looper
 import android.util.Log
 import android.view.Display
+import com.android.systemui.Dumpable
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayId
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
+import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.LogLevel
+import com.android.systemui.log.dagger.PulseLog
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.time.SystemClock
+import java.io.PrintWriter
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,6 +58,11 @@ import kotlinx.coroutines.launch
  * that is the main thread: Visualizer binds its event handler to the Looper of the thread that
  * registers the listener, and [start] runs on main. The mailbox stays so the controller remains
  * correct if callbacks ever arrive off-main; it is harmless otherwise.
+ *
+ * Every eligibility decision is observable without a debuggable build: [dump] prints each gate and
+ * the first false one, and [logBuffer] records transitions (never per-frame work). Read both with
+ * `adb shell dumpsys activity service com.android.systemui/.SystemUIService PulseController
+ * PulseLog`.
  */
 @PerDisplaySingleton
 class PulseController
@@ -69,23 +80,27 @@ constructor(
     private val batteryController: BatteryController,
     private val userTracker: UserTracker,
     private val systemClock: SystemClock,
+    private val dumpManager: DumpManager,
+    @param:PulseLog private val logBuffer: LogBuffer,
     @param:DisplayId private val displayId: Int,
     @param:DisplayAware private val displayScope: CoroutineScope,
     @param:Main private val mainDispatcher: CoroutineDispatcher,
     @param:Main private val mainExecutor: Executor,
-) : SystemUIDisplaySubcomponent.LifecycleListener {
+) : SystemUIDisplaySubcomponent.LifecycleListener, Dumpable {
     private val started = AtomicBoolean(false)
+    private var dumpableRegistered = false
     @Volatile private var collectionJob: Job? = null
 
     // Eligibility inputs (main thread). Unknown inputs start in their fail-closed state.
     private var config = PulseConfig(enabled = false, color = DEFAULT_COLOR, heightDp = 48)
     private var hostState = PulseHostState()
     private var playbackTarget = PulsePlaybackTarget.INACTIVE
-    private var deviceEntered = false
+    private var keyguardGone = false
     private var awake = false
     private var powerSave = true
     private var lastInputs: EligibilityInputs? = null
     private var activationFailed = false
+    private var lastBlockedBy: String? = UNKNOWN_GATE
 
     // Runtime state (main thread).
     private var captureActive = false
@@ -120,6 +135,7 @@ constructor(
     private val userCallback =
         object : UserTracker.Callback {
             override fun onUserChanged(newUser: Int, userContext: Context) {
+                logBuffer.log(TAG, LogLevel.DEBUG, {}, { "user switched" })
                 activationFailed = false
                 stopRuntime()
                 recompute()
@@ -132,6 +148,8 @@ constructor(
 
     override fun start() {
         if (displayId != Display.DEFAULT_DISPLAY || !started.compareAndSet(false, true)) return
+        logBuffer.log(TAG, LogLevel.DEBUG, {}, { "controller started" })
+        registerDumpable()
         batteryController.addCallback(batteryCallback)
         userTracker.addCallback(userCallback, mainExecutor)
         mainExecutor.execute {
@@ -154,17 +172,19 @@ constructor(
                 }
                 launch {
                     hostStateRepository.state.collectLatest {
+                        if (it.activeHost != hostState.activeHost) logHostChanged(it.activeHost)
                         hostState = it
                         recompute()
                     }
                 }
                 launch {
-                    // Device entry is scene-container only; this also covers the legacy keyguard.
-                    // Lockscreen, AOD and keyguard-occluding activities are not GONE.
+                    // DeviceEntryInteractor.isDeviceEntered only emits with the scene container;
+                    // the keyguard transition state covers both. Lockscreen, AOD and
+                    // keyguard-occluding activities are not GONE.
                     keyguardTransitionInteractor
                         .isFinishedIn(Scenes.Gone, KeyguardState.GONE)
                         .collectLatest {
-                            deviceEntered = it
+                            keyguardGone = it
                             recompute()
                         }
                 }
@@ -183,6 +203,8 @@ constructor(
      */
     override fun stop() {
         if (!started.compareAndSet(true, false)) return
+        logBuffer.log(TAG, LogLevel.DEBUG, {}, { "controller stopped" })
+        unregisterDumpable()
         collectionJob?.cancel()
         collectionJob = null
         userTracker.removeCallback(userCallback)
@@ -200,7 +222,24 @@ constructor(
     private fun teardown() {
         activationFailed = false
         lastInputs = null
+        lastBlockedBy = UNKNOWN_GATE
         stopRuntime()
+    }
+
+    /** Registration can race a not-yet-stopped previous instance; never crash SystemUI on it. */
+    private fun registerDumpable() {
+        try {
+            dumpManager.registerNormalDumpable(TAG, this)
+            dumpableRegistered = true
+        } catch (_: IllegalArgumentException) {
+            Log.w(TAG, "Dumpable already registered")
+        }
+    }
+
+    private fun unregisterDumpable() {
+        if (!dumpableRegistered) return
+        dumpableRegistered = false
+        dumpManager.unregisterDumpable(TAG)
     }
 
     private fun onConfigChanged(next: PulseConfig) {
@@ -213,23 +252,32 @@ constructor(
         }
     }
 
+    private fun currentInputs() =
+        EligibilityInputs(config.enabled, hostState, keyguardGone, awake, powerSave, playbackTarget)
+
     private fun recompute() {
-        val inputs =
-            EligibilityInputs(
-                config.enabled,
-                hostState,
-                deviceEntered,
-                awake,
-                powerSave,
-                playbackTarget,
-            )
+        val inputs = currentInputs()
         if (inputs != lastInputs) {
             // Any relevant input change clears an activation or silence failure latch.
             lastInputs = inputs
+            if (activationFailed) logBuffer.log(TAG, LogLevel.DEBUG, {}, { "latch cleared" })
             activationFailed = false
         }
 
-        if (!isEligible(inputs)) {
+        val blockedBy = blockedBy(inputs)
+        if (blockedBy != lastBlockedBy) {
+            lastBlockedBy = blockedBy
+            logBuffer.log(
+                TAG,
+                LogLevel.DEBUG,
+                {
+                    bool1 = blockedBy == null
+                    str1 = blockedBy ?: NO_GATE
+                },
+                { "eligible=$bool1 blockedBy=$str1" },
+            )
+        }
+        if (blockedBy != null) {
             stopRuntime()
             return
         }
@@ -240,18 +288,53 @@ constructor(
         if (!captureActive) startRuntime(playbackTarget.sessionId)
     }
 
-    private fun isEligible(inputs: EligibilityInputs): Boolean =
-        started.get() &&
-            displayId == Display.DEFAULT_DISPLAY &&
-            inputs.enabled &&
-            inputs.hostState.activeHost != PulseHost.NONE &&
-            inputs.hostState.navigationVisible &&
-            !inputs.hostState.screenPinningActive &&
-            inputs.deviceEntered &&
-            inputs.awake &&
-            !inputs.powerSave &&
-            inputs.playbackTarget.active &&
-            !activationFailed
+    /**
+     * The eligibility predicate: the name of the first false gate, or null when Pulse may run. The
+     * names match the [dump] fields so `blockedBy=` points at the line to read.
+     */
+    private fun blockedBy(inputs: EligibilityInputs): String? =
+        when {
+            !started.get() -> "started"
+            displayId != Display.DEFAULT_DISPLAY -> "displayId"
+            !inputs.enabled -> "enabled"
+            inputs.hostState.activeHost == PulseHost.NONE -> "activeHost"
+            !inputs.hostState.navigationVisible -> "navigationVisible"
+            inputs.hostState.screenPinningActive -> "screenPinningActive"
+            !inputs.keyguardGone -> "keyguardGone"
+            !inputs.awake -> "awake"
+            inputs.powerSave -> "powerSave"
+            !inputs.playbackTarget.active -> "playbackActive"
+            activationFailed -> "activationFailed"
+            else -> null
+        }
+
+    /**
+     * Called on the dump thread; reads main-confined state without synchronization, so values may
+     * be momentarily inconsistent. Never prints session ids, only whether one is selected.
+     */
+    override fun dump(pw: PrintWriter, args: Array<out String>) {
+        val inputs = currentInputs()
+        val blockedBy = blockedBy(inputs)
+        pw.println("started=${started.get()}")
+        pw.println("displayId=$displayId")
+        pw.println("enabled=${inputs.enabled}")
+        pw.println("activeHost=${inputs.hostState.activeHost}")
+        pw.println("navigationVisible=${inputs.hostState.navigationVisible}")
+        pw.println("screenPinningActive=${inputs.hostState.screenPinningActive}")
+        pw.println("keyguardGone=${inputs.keyguardGone}")
+        pw.println("awake=${inputs.awake}")
+        pw.println("powerSave=${inputs.powerSave}")
+        pw.println("playbackActive=${inputs.playbackTarget.active}")
+        pw.println("sessionSelected=${inputs.playbackTarget.sessionId != null}")
+        pw.println("activationFailed=$activationFailed")
+        pw.println("eligible=${blockedBy == null}")
+        pw.println("blockedBy=${blockedBy ?: NO_GATE}")
+        pw.println("captureActive=$captureActive")
+        pw.println("captureEpoch=${captureEpoch.get()}")
+        pw.println("frameGateReady=${frameGate.ready}")
+        pw.println("overlayShown=$overlayShown")
+        pw.println("windowAttached=${windowController.isAttached}")
+    }
 
     private fun startRuntime(sessionId: Int?) {
         val epoch = captureEpoch.incrementAndGet()
@@ -273,6 +356,12 @@ constructor(
             failEpoch(epoch, "capture start")
             return
         }
+        logBuffer.log(
+            TAG,
+            LogLevel.DEBUG,
+            { bool1 = sessionId != null },
+            { "capture started selected=$bool1 fallback=${!bool1}" },
+        )
         frameGate.start(systemClock.elapsedRealtime())
         startWatchdog(epoch)
     }
@@ -335,6 +424,7 @@ constructor(
             return
         }
         overlayShown = true
+        logBuffer.log(TAG, LogLevel.DEBUG, {}, { "ready, overlay shown" })
     }
 
     /** Tears down [epoch] and latches until an eligibility input changes; stale epochs no-op. */
@@ -342,12 +432,14 @@ constructor(
         if (!captureActive || epoch != captureEpoch.get()) return
         // Stage only: never session ids, FFT data or media identity.
         Log.w(TAG, "Pulse stopped: $stage")
+        logBuffer.log(TAG, LogLevel.WARNING, { str1 = stage }, { "failed stage=$str1" })
         activationFailed = true
         stopRuntime()
     }
 
     /** Synchronous and idempotent; safe whether or not the overlay was ever shown. */
     private fun stopRuntime() {
+        if (captureActive) logBuffer.log(TAG, LogLevel.DEBUG, {}, { "capture stopped" })
         captureEpoch.incrementAndGet()
         captureActive = false
         captureSessionId = null
@@ -363,14 +455,21 @@ constructor(
     private data class EligibilityInputs(
         val enabled: Boolean,
         val hostState: PulseHostState,
-        val deviceEntered: Boolean,
+        val keyguardGone: Boolean,
         val awake: Boolean,
         val powerSave: Boolean,
         val playbackTarget: PulsePlaybackTarget,
     )
 
+    private fun logHostChanged(host: PulseHost) {
+        logBuffer.log(TAG, LogLevel.DEBUG, { str1 = host.name }, { "host=$str1" })
+    }
+
     private companion object {
         const val TAG = "PulseController"
+        const val NO_GATE = "none"
+        /** Sentinel so the first evaluation after start is always logged. */
+        const val UNKNOWN_GATE = "unknown"
         const val DEFAULT_COLOR = 0xFFFFFF
         const val WATCHDOG_INTERVAL_MS = 250L
     }

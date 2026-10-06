@@ -42,6 +42,10 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
         view.configurationListener = ::onViewConfigurationChanged
     }
 
+    /** Whether the overlay window is currently added to WindowManager. */
+    val isAttached: Boolean
+        get() = attached
+
     /** Invoked after the window had to be removed because it could no longer be updated. */
     fun setWindowFailureListener(listener: (() -> Unit)?) {
         windowFailureListener = listener

@@ -670,6 +670,14 @@ public abstract class LogModule {
         return factory.create("RearDisplayLog", 50);
     }
 
+    /** Provides a {@link LogBuffer} for Pulse eligibility and lifecycle transitions. */
+    @Provides
+    @SysUISingleton
+    @PulseLog
+    public static LogBuffer providePulseLogBuffer(LogBufferFactory factory) {
+        return factory.create("PulseLog", 100);
+    }
+
     /**
      * Registers the clear log buffers ADB command.
      */
