@@ -751,6 +751,11 @@ public class NavigationBar extends ViewController<NavigationBarView> implements 
         // Ensure we try to get currentSysuiState from navBarHelper before command queue callbacks
         // start firing, since the latter is source of truth
         parseCurrentSysuiState();
+        // Seed pinning like TaskbarDelegate: a recreated bar, or one replacing Taskbar, can start
+        // while a task is already pinned and gets no lock task change until it is unpinned.
+        mScreenPinningActive =
+                (mSysUiFlagsContainer.getFlags() & SYSUI_STATE_SCREEN_PINNING) != 0;
+        mView.setInScreenPinning(mScreenPinningActive);
         mCommandQueue.addCallback(this);
         mHomeButtonLongPressDurationMs = Optional.of(mDeviceConfigProxy.getLong(
                 DeviceConfig.NAMESPACE_SYSTEMUI,

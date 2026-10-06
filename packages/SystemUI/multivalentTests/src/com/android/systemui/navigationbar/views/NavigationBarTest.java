@@ -706,6 +706,17 @@ public class NavigationBarTest extends SysuiTestCase {
     }
 
     @Test
+    public void testPulse_initSeedsScreenPinningFromSysUiState() {
+        // A recreated bar, or one replacing Taskbar, may start while a task is already pinned.
+        when(mMockSysUiState.getFlags()).thenReturn(SYSUI_STATE_SCREEN_PINNING);
+        attachAsActivePulseHost();
+
+        mNavigationBar.publishCurrentPulseState();
+
+        assertTrue(pulseState().getScreenPinningActive());
+    }
+
+    @Test
     public void testPulse_publishCurrentPulseState_republishesRetainedState() {
         Consumer<Boolean> aggregateListener = attachAsActivePulseHost();
         aggregateListener.accept(true);

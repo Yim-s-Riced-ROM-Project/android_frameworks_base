@@ -280,10 +280,19 @@ public class NavigationBarControllerImpl implements
             Trace.beginSection("NavigationBarController#initializeTaskbarIfNecessary");
             // Hint to NavBarHelper if we are replacing an existing bar to skip extra work
             mNavBarHelper.setTogglingNavbarTaskbar(mNavigationBars.contains(displayId));
-            // An already active Taskbar stays the Pulse host; anything else is a host transition.
-            final boolean pulseHostChanging = !mTaskbarDelegate.isInitialized()
+            // An already active Taskbar stays the Pulse host. Replacing a host is a transition;
+            // the repository is also checked so an earlier failed activation self-corrects.
+            final boolean pulseHostReplaced = !mTaskbarDelegate.isInitialized()
                     || mNavigationBars.get(displayId) != null;
-            if (pulseHostChanging) {
+            final PulseHostStateRepository pulseRepository =
+                    mPulseHostStateRepositoryStore.forDisplay(displayId);
+            final boolean pulseHostChanging = pulseHostReplaced
+                    || (pulseRepository != null
+                            && pulseRepository.getState().getValue().getActiveHost()
+                                    != PulseHost.TASKBAR);
+            // Only a host being replaced needs Pulse stopped first; a repository that merely
+            // lost its host is re-activated below without restarting Taskbar.
+            if (pulseHostReplaced) {
                 deactivatePulseHost(displayId);
             }
             // Remove navigation bar when taskbar is showing
@@ -321,6 +330,8 @@ public class NavigationBarControllerImpl implements
         PulseHostStateRepository repository = mPulseHostStateRepositoryStore.forDisplay(displayId);
         if (repository != null) {
             repository.activate(host);
+        } else if (displayId == mDisplayTracker.getDefaultDisplayId()) {
+            Log.w(TAG, "Pulse host state unavailable; Pulse host not activated");
         }
     }
 

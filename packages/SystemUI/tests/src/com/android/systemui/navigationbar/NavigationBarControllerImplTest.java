@@ -55,6 +55,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.pulse.PulseHost;
+import com.android.systemui.navigationbar.pulse.PulseHostState;
 import com.android.systemui.navigationbar.pulse.PulseHostStateRepository;
 import com.android.systemui.navigationbar.pulse.PulseHostStateRepositoryStore;
 import com.android.systemui.navigationbar.views.NavigationBar;
@@ -72,6 +73,8 @@ import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.pip.Pip;
 
 import kotlinx.coroutines.CoroutineDispatcher;
+import kotlinx.coroutines.flow.MutableStateFlow;
+import kotlinx.coroutines.flow.StateFlowKt;
 
 import org.junit.After;
 import org.junit.Before;
@@ -118,6 +121,7 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
     private PulseHostStateRepository mDefaultPulseHostStateRepository;
     @Mock
     private PulseHostStateRepository mSecondaryPulseHostStateRepository;
+    private MutableStateFlow<PulseHostState> mDefaultPulseHostState;
 
     @Before
     public void setUp() {
@@ -126,6 +130,8 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
                 .thenReturn(mDefaultPulseHostStateRepository);
         when(mPulseHostStateRepositoryStore.forDisplay(SECONDARY_DISPLAY))
                 .thenReturn(mSecondaryPulseHostStateRepository);
+        mDefaultPulseHostState = StateFlowKt.MutableStateFlow(new PulseHostState());
+        when(mDefaultPulseHostStateRepository.getState()).thenReturn(mDefaultPulseHostState);
         mNavigationBarController = spy(
                 new NavigationBarControllerImpl(mContext,
                         mock(LauncherProxyService.class),
@@ -380,11 +386,30 @@ public class NavigationBarControllerImplTest extends SysuiTestCase {
         doReturn(true).when(mNavigationBarController).canCreateNavBarOrTaskBar(DEFAULT_DISPLAY);
         doReturn(null).when(mNavigationBarController.mNavigationBars).get(DEFAULT_DISPLAY);
         when(mTaskbarDelegate.isInitialized()).thenReturn(true);
+        mDefaultPulseHostState.setValue(new PulseHostState(PulseHost.TASKBAR, true, false));
 
         mNavigationBarController.createNavigationBar(mContext.getDisplay(), null, null);
 
         verify(mDefaultPulseHostStateRepository, never()).deactivate();
         verify(mDefaultPulseHostStateRepository, never()).activate(any());
+    }
+
+    @Test
+    public void testPulseHost_taskbarInitializedButHostInactive_activatesWithoutRestart() {
+        mNavigationBarController.mIsLargeScreen = true;
+        doReturn(true).when(mNavigationBarController).canCreateNavBarOrTaskBar(DEFAULT_DISPLAY);
+        doReturn(null).when(mNavigationBarController.mNavigationBars).get(DEFAULT_DISPLAY);
+        when(mTaskbarDelegate.isInitialized()).thenReturn(true);
+        // A failed earlier activation left the repository without a host.
+        mDefaultPulseHostState.setValue(new PulseHostState());
+
+        mNavigationBarController.createNavigationBar(mContext.getDisplay(), null, null);
+
+        InOrder inOrder = inOrder(mDefaultPulseHostStateRepository, mTaskbarDelegate);
+        inOrder.verify(mDefaultPulseHostStateRepository).activate(PulseHost.TASKBAR);
+        inOrder.verify(mTaskbarDelegate).publishCurrentPulseState();
+        verify(mDefaultPulseHostStateRepository, never()).deactivate();
+        verify(mTaskbarDelegate, never()).destroy();
     }
 
     @Test
