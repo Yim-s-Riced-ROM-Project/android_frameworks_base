@@ -32,6 +32,7 @@ import com.android.systemui.display.domain.interactor.displayStateInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.navigationbar.pulse.PulseHostStateRepository
 import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.plugins.fakeDarkIconDispatcher
 import com.android.systemui.statusbar.chips.ui.viewmodel.OngoingActivityChipsViewModel
@@ -122,6 +123,8 @@ fun Kosmos.createFakeDisplaySubcomponent(
 
         override val sysuiDarkIconDispatcher: SysuiDarkIconDispatcher
             get() = sysUiDarkIconDispatcher
+
+        override val pulseHostStateRepository = PulseHostStateRepository()
 
         override val homeStatusBarViewModelFactory: HomeStatusBarViewModelFactory
             get() =
