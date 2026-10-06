@@ -678,6 +678,14 @@ public abstract class LogModule {
         return factory.create("PulseLog", 100);
     }
 
+    /** Provides a {@link LogBuffer} for CRT screen-off selection and lifecycle transitions. */
+    @Provides
+    @SysUISingleton
+    @CrtScreenOffAnimationLog
+    public static LogBuffer provideCrtScreenOffAnimationLogBuffer(LogBufferFactory factory) {
+        return factory.create("CrtScreenOffAnimationLog", 100);
+    }
+
     /**
      * Registers the clear log buffers ADB command.
      */

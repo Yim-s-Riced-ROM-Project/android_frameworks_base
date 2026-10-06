@@ -16,14 +16,21 @@
 
 package com.android.systemui.statusbar.phone
 
+import android.animation.ValueAnimator
 import android.os.Handler
 import android.os.PowerManager
+import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.RequiresFlagsEnabled
+import android.provider.Settings
 import android.testing.TestableLooper.RunWithLooper
 import android.view.Display
+import android.view.View
+import android.view.ViewGroup
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.jank.InteractionJankMonitor
+import com.android.internal.jank.InteractionJankMonitor.CUJ_SCREEN_OFF
+import com.android.internal.jank.InteractionJankMonitor.CUJ_SCREEN_OFF_SHOW_AOD
 import com.android.server.display.feature.flags.Flags as displayManagerFlags
 import com.android.server.power.feature.flags.Flags as powerManagerFlags
 import com.android.systemui.DejankUtils
@@ -34,6 +41,9 @@ import com.android.systemui.keyguard.WakefulnessLifecycle
 import com.android.systemui.shade.ShadeViewController
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor
 import com.android.systemui.shade.domain.interactor.ShadeLockscreenInteractor
+import com.android.systemui.shared.Flags as SharedFlags
+import com.android.systemui.statusbar.CircleReveal
+import com.android.systemui.statusbar.CrtCollapseReveal
 import com.android.systemui.statusbar.LiftReveal
 import com.android.systemui.statusbar.LightRevealEffect
 import com.android.systemui.statusbar.LightRevealScrim
@@ -42,6 +52,7 @@ import com.android.systemui.statusbar.StatusBarStateControllerImpl
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.settings.GlobalSettings
+import com.google.common.truth.Truth.assertThat
 import junit.framework.Assert.assertFalse
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
@@ -50,7 +61,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.Mock
+import org.mockito.Mockito.any
+import org.mockito.Mockito.anyBoolean
+import org.mockito.Mockito.anyFloat
 import org.mockito.Mockito.anyLong
+import org.mockito.Mockito.inOrder
+import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
@@ -79,6 +95,7 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
     @Mock private lateinit var powerManager: PowerManager
     @Mock private lateinit var displayStateInteractor: DisplayStateInteractor
     @Mock private lateinit var handler: Handler
+    @Mock private lateinit var crtCoordinator: CrtScreenOffAnimationCoordinator
 
     val kosmos = testKosmos()
 
@@ -101,6 +118,7 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
                 { panelExpansionInteractor },
                 { displayStateInteractor },
                 handler,
+                crtCoordinator,
             )
         controller.initialize(centralSurfaces, shadeViewController, lightRevealScrim)
     }
@@ -110,6 +128,7 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
         // Tell the screen off controller to cancel the animations and clean up its state, or
         // subsequent tests will act unpredictably as the animator continues running.
         controller.onStartedWakingUp()
+        DejankUtils.setImmediate(false)
     }
 
     /**
@@ -245,5 +264,163 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
 
         // Clean up
         DejankUtils.setImmediate(false)
+    }
+
+    @Test
+    fun acceptedNormalStart_invokesCoordinatorOnceBeforeAnimatorCallback() {
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+
+        controller.startAnimation()
+
+        val order = inOrder(crtCoordinator, lightRevealScrim)
+        order.verify(crtCoordinator).start(true)
+        order.verify(lightRevealScrim).revealEffect = revealEffect
+        verify(crtCoordinator, times(1)).start(anyBoolean())
+    }
+
+    @Test
+    fun acceptedMinMode_startsCoordinatorWithNormalModeFalse() {
+        givenAcceptedState(minMode = true)
+
+        controller.startAnimation()
+
+        verify(crtCoordinator).start(false)
+        assertThat(lightRevealAnimator().duration).isEqualTo(100L)
+    }
+
+    @Test
+    fun rejectedStart_reportsTypedDecisionAndNeverStartsCoordinator() {
+        `when`(dozeParameters.canControlUnlockedScreenOff()).thenReturn(false)
+
+        controller.startAnimation()
+
+        verify(crtCoordinator)
+            .onStockDecision(
+                ScreenOffAnimationDecision.blocked(
+                    ScreenOffAnimationBlockedReason.CANNOT_CONTROL_UNLOCKED_SCREEN_OFF
+                )
+            )
+        verify(crtCoordinator, never()).start(anyBoolean())
+    }
+
+    @DisableFlags(SharedFlags.FLAG_AMBIENT_AOD)
+    @Test
+    fun wake_cancelsCoordinatorBeforeRestoringFullReveal() {
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+        controller.startAnimation()
+
+        controller.onStartedWakingUp()
+
+        val order = inOrder(crtCoordinator, lightRevealScrim)
+        order.verify(crtCoordinator).cancel(CrtCancellationReason.WAKE)
+        order.verify(lightRevealScrim).revealAmount = 1f
+    }
+
+    @Test
+    fun naturalEnd_completesCoordinator() {
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+        controller.startAnimation()
+
+        lightRevealAnimator().end()
+
+        verify(crtCoordinator).complete()
+        verify(crtCoordinator, never()).cancel(CrtCancellationReason.ANIMATOR_CANCELLED)
+    }
+
+    @Test
+    fun animatorCancel_cancelsBeforeTrailingComplete() {
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+        controller.startAnimation()
+
+        lightRevealAnimator().cancel()
+
+        // The cancellation ends the transition first, so the trailing onAnimationEnd completion
+        // is a coordinator no-op (see CrtScreenOffAnimationCoordinatorTest idempotence).
+        val order = inOrder(crtCoordinator)
+        order.verify(crtCoordinator).cancel(CrtCancellationReason.ANIMATOR_CANCELLED)
+        order.verify(crtCoordinator).complete()
+    }
+
+    @Test
+    fun normalRevealDuration_remains500Ms() {
+        givenAcceptedState()
+
+        controller.startAnimation()
+
+        assertThat(lightRevealAnimator().duration).isEqualTo(500L)
+    }
+
+    @Test
+    fun aodSchedulingDelay_remains600Ms() {
+        givenAcceptedState()
+
+        controller.startAnimation()
+
+        verify(handler).postDelayed(any(Runnable::class.java), eq(600L))
+    }
+
+    @Test
+    fun existingScreenOffCuj_stillBeginsAndEnds() {
+        val rootView = mock(ViewGroup::class.java)
+        `when`(notifShadeWindowController.windowRootView).thenReturn(rootView)
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+
+        controller.startAnimation()
+        verify(interactionJankMonitor).begin(rootView, CUJ_SCREEN_OFF)
+
+        lightRevealAnimator().end()
+        verify(interactionJankMonitor).end(CUJ_SCREEN_OFF)
+    }
+
+    @Test
+    fun existingShowAodCuj_stillBeginsAndEnds() {
+        `when`(notifShadeWindowController.windowRootView).thenReturn(mock(ViewGroup::class.java))
+        // Alpha already at its end value makes PropertyAnimator run the end action immediately.
+        val keyguardView = mock(View::class.java)
+        `when`(keyguardView.alpha).thenReturn(1f)
+        var afterRan = false
+
+        controller.animateInKeyguard(keyguardView) { afterRan = true }
+
+        verify(interactionJankMonitor).cancel(CUJ_SCREEN_OFF_SHOW_AOD)
+        verify(interactionJankMonitor)
+            .begin(any(InteractionJankMonitor.Configuration.Builder::class.java))
+        verify(interactionJankMonitor).end(CUJ_SCREEN_OFF_SHOW_AOD)
+        assertThat(afterRan).isTrue()
+    }
+
+    @DisableFlags(SharedFlags.FLAG_AMBIENT_AOD)
+    @Test
+    fun circleBaseEffect_doesNotSuppressCrtOverrideUpdates() {
+        `when`(lightRevealScrim.revealEffect).thenReturn(CircleReveal(0, 0, 0, 1))
+        `when`(lightRevealScrim.activeRevealEffect).thenReturn(CrtCollapseReveal)
+        givenAcceptedState()
+        DejankUtils.setImmediate(true)
+        controller.startAnimation()
+
+        lightRevealAnimator().setCurrentFraction(0.5f)
+
+        verify(lightRevealScrim).revealAmount = 0.5f
+    }
+
+    /** Stubs every stock gate open, with a real 1x animator duration scale. */
+    private fun givenAcceptedState(minMode: Boolean = false) {
+        `when`(dozeParameters.canControlUnlockedScreenOff()).thenReturn(true)
+        `when`(dozeParameters.isMinModeActive()).thenReturn(minMode)
+        `when`(globalSettings.getFloat(eq(Settings.Global.ANIMATOR_DURATION_SCALE), anyFloat()))
+            .thenReturn(1f)
+        `when`(displayStateInteractor.isDefaultDisplayOff).thenReturn(MutableStateFlow(false))
+        controller.updateAnimatorDurationScale()
+    }
+
+    private fun lightRevealAnimator(): ValueAnimator {
+        val field = controller.javaClass.getDeclaredField("lightRevealAnimator")
+        field.isAccessible = true
+        return field.get(controller) as ValueAnimator
     }
 }

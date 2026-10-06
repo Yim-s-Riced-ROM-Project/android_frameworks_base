@@ -76,6 +76,7 @@ constructor(
     private val panelExpansionInteractorLazy: Lazy<PanelExpansionInteractor>,
     private val displayStateInteractorLazy: Lazy<DisplayStateInteractor>,
     @Main private val handler: Handler,
+    private val crtScreenOffAnimationCoordinator: CrtScreenOffAnimationCoordinator,
 ) : WakefulnessLifecycle.Observer, ScreenOffAnimation {
     private lateinit var centralSurfaces: CentralSurfaces
     /**
@@ -105,7 +106,7 @@ constructor(
             interpolator = Interpolators.LINEAR
             addUpdateListener {
                 if (ambientAod()) return@addUpdateListener
-                if (lightRevealScrim.revealEffect !is CircleReveal) {
+                if (lightRevealScrim.activeRevealEffect !is CircleReveal) {
                     lightRevealScrim.revealAmount = it.animatedValue as Float
                 }
                 if (
@@ -120,8 +121,11 @@ constructor(
             addListener(
                 object : AnimatorListenerAdapter() {
                     override fun onAnimationCancel(animation: Animator) {
+                        crtScreenOffAnimationCoordinator.cancel(
+                            CrtCancellationReason.ANIMATOR_CANCELLED
+                        )
                         if (ambientAod()) return
-                        if (lightRevealScrim.revealEffect !is CircleReveal) {
+                        if (lightRevealScrim.activeRevealEffect !is CircleReveal) {
                             lightRevealScrim.revealAmount = 1f
                         }
                     }
@@ -129,6 +133,8 @@ constructor(
                     override fun onAnimationEnd(animation: Animator) {
                         lightRevealAnimationPlaying = false
                         interactionJankMonitor.end(CUJ_SCREEN_OFF)
+                        // No-op after a cancellation, which already ended the transition.
+                        crtScreenOffAnimationCoordinator.complete()
                     }
 
                     override fun onAnimationStart(animation: Animator) {
@@ -167,6 +173,7 @@ constructor(
     ) {
         this.initialized = true
         this.lightRevealScrim = lightRevealScrim
+        crtScreenOffAnimationCoordinator.initialize(lightRevealScrim)
         this.revealEffect = lightRevealScrim.revealEffect
         this.centralSurfaces = centralSurfaces
 
@@ -268,6 +275,8 @@ constructor(
 
         shouldAnimateInKeyguard = false
         DejankUtils.removeCallbacks(startLightRevealCallback)
+        // Expose the latest base wake/biometric effect before the reveal is restored.
+        crtScreenOffAnimationCoordinator.cancel(CrtCancellationReason.WAKE)
         lightRevealAnimator.cancel()
         handler.removeCallbacksAndMessages(null)
     }
@@ -297,6 +306,8 @@ constructor(
             } else {
                 lightRevealAnimator.setDuration(LIGHT_REVEAL_ANIMATION_DURATION_MINMODE)
             }
+            // Install any CRT override before the reveal's first frame. Min mode stays Stock.
+            crtScreenOffAnimationCoordinator.start(normalMode = shouldAnimateInKeyguard)
 
             // Start the animation on the next frame. startAnimation() is called after
             // PhoneWindowManager makes a binder call to System UI on
@@ -336,61 +347,50 @@ constructor(
      * on the current state of the device.
      */
     fun shouldPlayUnlockedScreenOffAnimation(): Boolean {
-        // If we haven't been initialized yet, we don't have a StatusBar/LightRevealScrim yet, so we
-        // can't perform the animation.
-        if (!initialized) {
-            return false
-        }
+        val decision = screenOffAnimationDecision()
+        crtScreenOffAnimationCoordinator.onStockDecision(decision)
+        return decision.eligible
+    }
 
-        // If the device isn't in a state where we can control unlocked screen off (no AOD enabled,
-        // power save, etc.) then we shouldn't try to do so.
-        if (!dozeParameters.get().canControlUnlockedScreenOff()) {
-            return false
-        }
-
-        // If we explicitly already decided not to play the screen off animation, then never change
-        // our mind.
-        if (decidedToAnimateGoingToSleep == false) {
-            return false
-        }
-
-        // If animations are disabled system-wide, don't play this one either.
-        if (globalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) {
-            return false
-        }
-
-        // We currently draw both the light reveal scrim, and the AOD UI, in the shade. If it's
-        // already expanded and showing notifications/QS, the animation looks really messy. For now,
-        // disable it if the notification panel is expanded.
-        if (
+    /** The stock eligibility gates, in order, typed by the first gate that rejects. */
+    private fun screenOffAnimationDecision(): ScreenOffAnimationDecision =
+        when {
+            // If we haven't been initialized yet, we don't have a StatusBar/LightRevealScrim yet,
+            // so we can't perform the animation.
+            !initialized -> blocked(ScreenOffAnimationBlockedReason.NOT_INITIALIZED)
+            // If the device isn't in a state where we can control unlocked screen off (no AOD
+            // enabled, power save, etc.) then we shouldn't try to do so.
+            !dozeParameters.get().canControlUnlockedScreenOff() ->
+                blocked(ScreenOffAnimationBlockedReason.CANNOT_CONTROL_UNLOCKED_SCREEN_OFF)
+            // If we explicitly already decided not to play the screen off animation, then never
+            // change our mind.
+            decidedToAnimateGoingToSleep == false ->
+                blocked(ScreenOffAnimationBlockedReason.PREVIOUSLY_REJECTED)
+            // If animations are disabled system-wide, don't play this one either.
+            globalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f ->
+                blocked(ScreenOffAnimationBlockedReason.ANIMATIONS_DISABLED)
+            // We currently draw both the light reveal scrim, and the AOD UI, in the shade. If it's
+            // already expanded and showing notifications/QS, the animation looks really messy. For
+            // now, disable it if the notification panel is expanded.
             (!this::centralSurfaces.isInitialized || statusBarStateControllerImpl.isExpanded) &&
                 // Status bar might be expanded because we have started
                 // playing the animation already
-                !isAnimationPlaying()
-        ) {
-            return false
-        }
-
-        // We only play the unlocked screen off animation if we are... unlocked.
-        if (statusBarStateControllerImpl.state != StatusBarState.SHADE) {
-            return false
-        }
-
-        if (!this::centralSurfaces.isInitialized) {
-            return false
-        }
-
-        // If this display is off, skip animation to reduce flickers.
-        if (
+                !isAnimationPlaying() -> blocked(ScreenOffAnimationBlockedReason.SHADE_EXPANDED)
+            // We only play the unlocked screen off animation if we are... unlocked.
+            statusBarStateControllerImpl.state != StatusBarState.SHADE ->
+                blocked(ScreenOffAnimationBlockedReason.NOT_SHADE)
+            !this::centralSurfaces.isInitialized ->
+                blocked(ScreenOffAnimationBlockedReason.CENTRAL_SURFACES_UNAVAILABLE)
+            // If this display is off, skip animation to reduce flickers.
             powerManagerFlags.separateTimeoutsFlicker() &&
-                displayStateInteractorLazy.get().isDefaultDisplayOff.value
-        ) {
-            return false
+                displayStateInteractorLazy.get().isDefaultDisplayOff.value ->
+                blocked(ScreenOffAnimationBlockedReason.DEFAULT_DISPLAY_OFF)
+            // Otherwise, good to go.
+            else -> ScreenOffAnimationDecision.ELIGIBLE
         }
 
-        // Otherwise, good to go.
-        return true
-    }
+    private fun blocked(reason: ScreenOffAnimationBlockedReason) =
+        ScreenOffAnimationDecision.blocked(reason)
 
     override fun shouldDelayDisplayDozeTransition(): Boolean =
         shouldPlayUnlockedScreenOffAnimation()
