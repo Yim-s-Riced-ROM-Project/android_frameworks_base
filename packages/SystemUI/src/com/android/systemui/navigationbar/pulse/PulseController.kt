@@ -246,7 +246,7 @@ constructor(
         val previous = config
         config = next
         if (!overlayShown) return
-        if (next.color != previous.color) windowController.setColorRgb(next.color)
+        if (next.argb != previous.argb) windowController.setColor(next.argb)
         if (next.heightDp != previous.heightDp && !windowController.updateHeight(next.heightDp)) {
             failEpoch(captureEpoch.get(), "window update")
         }
@@ -334,6 +334,7 @@ constructor(
         pw.println("frameGateReady=${frameGate.ready}")
         pw.println("overlayShown=$overlayShown")
         pw.println("windowAttached=${windowController.isAttached}")
+        pw.println("alpha=${config.alpha}")
     }
 
     private fun startRuntime(sessionId: Int?) {
@@ -417,7 +418,7 @@ constructor(
     }
 
     private fun showOverlay(epoch: Int, levels: FloatArray) {
-        windowController.setColorRgb(config.color)
+        windowController.setColor(config.argb)
         windowController.setLevels(levels)
         if (!windowController.show(config.heightDp)) {
             failEpoch(epoch, "window add")

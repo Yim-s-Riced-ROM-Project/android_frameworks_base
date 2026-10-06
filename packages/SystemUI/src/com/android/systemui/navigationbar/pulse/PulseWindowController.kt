@@ -82,7 +82,7 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
         }
     }
 
-    fun setColorRgb(color: Int) = view.setColorRgb(color)
+    fun setColor(argb: Int) = view.setColor(argb)
 
     fun setLevels(levels: FloatArray) = view.setLevels(levels)
 

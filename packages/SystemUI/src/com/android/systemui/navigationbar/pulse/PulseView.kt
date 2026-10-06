@@ -35,7 +35,6 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     private val paint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            alpha = MAX_ALPHA
             style = Paint.Style.FILL
         }
     private val levels = FloatArray(BAR_COUNT)
@@ -58,10 +57,9 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
         postInvalidateOnAnimation()
     }
 
-    fun setColorRgb(color: Int) {
-        val rgb = color and RGB_MASK
-        paint.color = Color.rgb(Color.red(rgb), Color.green(rgb), Color.blue(rgb))
-        paint.alpha = MAX_ALPHA
+    /** Sets the bar color, including its alpha. Called on setting changes, never per frame. */
+    fun setColor(argb: Int) {
+        paint.color = argb
         postInvalidateOnAnimation()
     }
 
@@ -102,7 +100,5 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     private companion object {
         const val BAR_COUNT = 32
         const val BAR_INSET_RATIO = 0.15f
-        const val MAX_ALPHA = 217
-        const val RGB_MASK = 0xFFFFFF
     }
 }

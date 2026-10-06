@@ -50,21 +50,20 @@ class PulseViewTest : SysuiTestCase() {
     }
 
     @Test
-    fun draw_usesConfiguredRgbWithFixedAlpha() {
+    fun draw_usesConfiguredArgb() {
         val view = PulseView(mContext)
         val canvas = mock(Canvas::class.java)
         val paintCaptor = ArgumentCaptor.forClass(Paint::class.java)
         view.layout(0, 0, 320, 100)
-        view.setColorRgb(0x123456)
+        view.setColor(Color.argb(0x80, 0x12, 0x34, 0x56))
         view.setLevels(floatArrayOf(1f))
 
         view.draw(canvas)
 
         verify(canvas)
             .drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), paintCaptor.capture())
-        assertThat(paintCaptor.value.color and 0xFFFFFF)
-            .isEqualTo(Color.rgb(0x12, 0x34, 0x56) and 0xFFFFFF)
-        assertThat(paintCaptor.value.alpha).isEqualTo(217)
+        assertThat(paintCaptor.value.color).isEqualTo(Color.argb(0x80, 0x12, 0x34, 0x56))
+        assertThat(paintCaptor.value.alpha).isEqualTo(0x80)
     }
 
     @Test

@@ -54,6 +54,7 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -204,7 +205,7 @@ class PulseControllerTest {
 
         verify(windowController, never()).show(any())
         verify(windowController, never()).setLevels(any())
-        verify(windowController, never()).setColorRgb(any())
+        verify(windowController, never()).setColor(any())
     }
 
     @Test
@@ -219,7 +220,7 @@ class PulseControllerTest {
         emitFrame(validFft())
 
         inOrder(windowController) {
-            verify(windowController).setColorRgb(COLOR)
+            verify(windowController).setColor(DEFAULT_ARGB)
             verify(windowController).setLevels(any())
             verify(windowController).show(64)
         }
@@ -404,8 +405,31 @@ class PulseControllerTest {
 
         assertThat(capture.requestedSessions).hasSize(1)
         assertThat(capture.stopCount).isEqualTo(0)
-        verify(windowController).setColorRgb(0x112233)
+        verify(windowController).setColor(0xD9112233.toInt())
         verify(windowController).updateHeight(72)
+    }
+
+    @Test
+    fun configuredAlpha_isComposedIntoOverlayColor() {
+        settings.value = settings.value.copy(alpha = 0x80)
+
+        showOverlay()
+
+        verify(windowController).setColor(0x80123456.toInt())
+    }
+
+    @Test
+    fun alphaChange_updatesOverlayColorWithoutRestart() {
+        showOverlay()
+
+        settings.value = settings.value.copy(alpha = 0x40)
+        runMain()
+
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+        verify(windowController).setColor(0x40123456)
+        verify(windowController, never()).hide()
+        verify(windowController, times(1)).show(any())
     }
 
     @Test
@@ -638,6 +662,14 @@ class PulseControllerTest {
     }
 
     @Test
+    fun dump_reportsCurrentAlpha() {
+        settings.value = settings.value.copy(alpha = 128)
+        showOverlay()
+
+        assertThat(dump()).contains("alpha=128\n")
+    }
+
+    @Test
     fun dump_reportsFirstFalseGate() {
         playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
         activateHost(PulseHost.NAVIGATION_BAR)
@@ -854,6 +886,7 @@ class PulseControllerTest {
 
     private companion object {
         const val COLOR = 0x123456
+        const val DEFAULT_ARGB = 0xD9123456.toInt()
         const val SESSION = 42
         const val FFT_SIZE = 512
         val DUMP_FIELDS =
@@ -877,6 +910,7 @@ class PulseControllerTest {
                 "frameGateReady",
                 "overlayShown",
                 "windowAttached",
+                "alpha",
             )
     }
 }
