@@ -43,7 +43,7 @@ internal object PulseFft {
 /** Converts Android Visualizer FFT output into smoothed logarithmic spectrum bars. */
 @PerDisplaySingleton
 class PulseSpectrumProcessor @Inject constructor() {
-    private val bars = FloatArray(BAR_COUNT)
+    private val bars = FloatArray(BAND_COUNT)
 
     fun process(fft: ByteArray): FloatArray {
         if (fft.size < MIN_FFT_SIZE || fft.size % 2 != 0) {
@@ -68,9 +68,9 @@ class PulseSpectrumProcessor @Inject constructor() {
     }
 
     private fun logarithmicBoundary(barIndex: Int, binCount: Int, logarithmicRange: Double): Int {
-        val boundary = (exp(logarithmicRange * barIndex / BAR_COUNT) - 1).toInt() + 1
+        val boundary = (exp(logarithmicRange * barIndex / BAND_COUNT) - 1).toInt() + 1
         val minimum = barIndex + 1
-        val maximum = binCount - BAR_COUNT + barIndex + 1
+        val maximum = binCount - BAND_COUNT + barIndex + 1
         return boundary.coerceIn(minimum, maximum)
     }
 
@@ -88,10 +88,11 @@ class PulseSpectrumProcessor @Inject constructor() {
         return bars
     }
 
-    private companion object {
-        const val BAR_COUNT = 32
-        const val MIN_FFT_SIZE = 2 + BAR_COUNT * 2
-        const val ATTACK = 0.55f
-        const val DECAY = 0.20f
+    internal companion object {
+        /** Analysed band count. Fixed: PulseView resamples it onto the configured bar count. */
+        const val BAND_COUNT = 32
+        private const val MIN_FFT_SIZE = 2 + BAND_COUNT * 2
+        private const val ATTACK = 0.55f
+        private const val DECAY = 0.20f
     }
 }

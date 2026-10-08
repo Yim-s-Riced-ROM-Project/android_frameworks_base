@@ -86,6 +86,12 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
 
     fun setBoost(strength: Int) = view.setBoost(strength)
 
+    fun setBarLayout(count: Int, gapPercent: Int) = view.setBarLayout(count, gapPercent)
+
+    /** The view's gap between bars in pixels, for the dump. */
+    val effectiveBarGapPx: Float
+        get() = view.effectiveBarGapPx
+
     fun setLevels(levels: FloatArray) = view.setLevels(levels)
 
     fun clear() = view.clear()

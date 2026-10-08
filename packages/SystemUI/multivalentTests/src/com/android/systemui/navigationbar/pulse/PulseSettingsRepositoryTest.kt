@@ -183,6 +183,49 @@ class PulseSettingsRepositoryTest : SysuiTestCase() {
     }
 
     @Test
+    fun config_barLayoutDefaultsToLegacyLook() = runTest {
+        val config = underTest.config.first()
+
+        assertThat(config.barCount).isEqualTo(32)
+        assertThat(config.barGapPercent).isEqualTo(30)
+    }
+
+    @Test
+    fun pulseConfig_barLayoutDefaultsToLegacyLook() {
+        val config = PulseConfig(enabled = true, color = 0x123456, heightDp = 48)
+
+        assertThat(config.barCount).isEqualTo(32)
+        assertThat(config.barGapPercent).isEqualTo(30)
+    }
+
+    @Test
+    fun config_clampsBarCountToSupportedRange() = runTest {
+        for ((stored, expected) in listOf(-1 to 16, 15 to 16, 65 to 64, 1000 to 64)) {
+            secureSettingsRepository.setInt(PulseSettingsRepository.BAR_COUNT_KEY, stored)
+            assertThat(underTest.config.first().barCount).isEqualTo(expected)
+        }
+    }
+
+    @Test
+    fun config_clampsBarGapToSupportedRange() = runTest {
+        for ((stored, expected) in listOf(-5 to 0, 81 to 80, Int.MAX_VALUE to 80)) {
+            secureSettingsRepository.setInt(PulseSettingsRepository.BAR_GAP_PERCENT_KEY, stored)
+            assertThat(underTest.config.first().barGapPercent).isEqualTo(expected)
+        }
+    }
+
+    @Test
+    fun config_passesInRangeOffGridBarLayoutThrough() = runTest {
+        secureSettingsRepository.setInt(PulseSettingsRepository.BAR_COUNT_KEY, 17)
+        secureSettingsRepository.setInt(PulseSettingsRepository.BAR_GAP_PERCENT_KEY, 33)
+
+        val config = underTest.config.first()
+
+        assertThat(config.barCount).isEqualTo(17)
+        assertThat(config.barGapPercent).isEqualTo(33)
+    }
+
+    @Test
     fun config_alphaFollowsSettingChangesForSelectedUser() {
         val kosmos = userAwareKosmos()
         kosmos.testScope.runTest {

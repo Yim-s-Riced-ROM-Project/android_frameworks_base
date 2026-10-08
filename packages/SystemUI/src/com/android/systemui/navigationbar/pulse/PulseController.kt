@@ -257,7 +257,21 @@ constructor(
                 { "colorMode=$str1" },
             )
         }
+        val barLayoutChanged =
+            next.barCount != previous.barCount || next.barGapPercent != previous.barGapPercent
+        if (barLayoutChanged) {
+            logBuffer.log(
+                TAG,
+                LogLevel.DEBUG,
+                {
+                    int1 = next.barCount
+                    int2 = next.barGapPercent
+                },
+                { "barLayout count=$int1 gap=$int2" },
+            )
+        }
         if (!overlayShown) return
+        if (barLayoutChanged) windowController.setBarLayout(next.barCount, next.barGapPercent)
         val argb = next.argb(nightMode)
         if (argb != previous.argb(nightMode)) windowController.setColor(argb)
         if (next.boost != previous.boost) windowController.setBoost(next.boost)
@@ -334,6 +348,7 @@ constructor(
     /**
      * Called on the dump thread; reads main-confined state without synchronization, so values may
      * be momentarily inconsistent. Never prints session ids, only whether one is selected.
+     * `barGapPx` is the gap as last laid out, so it trails a gap change made while hidden.
      */
     override fun dump(pw: PrintWriter, args: Array<out String>) {
         val inputs = currentInputs()
@@ -362,6 +377,9 @@ constructor(
         pw.println("nightMode=$nightMode")
         pw.println("effectiveColor=#%08X".format(config.argb(nightMode)))
         pw.println("boost=${config.boost}")
+        pw.println("barCount=${config.barCount}")
+        pw.println("barGapPercent=${config.barGapPercent}")
+        pw.println("barGapPx=${windowController.effectiveBarGapPx}")
     }
 
     private fun startRuntime(sessionId: Int?) {
@@ -447,6 +465,7 @@ constructor(
     private fun showOverlay(epoch: Int, levels: FloatArray) {
         windowController.setColor(config.argb(nightMode))
         windowController.setBoost(config.boost)
+        windowController.setBarLayout(config.barCount, config.barGapPercent)
         windowController.setLevels(levels)
         if (!windowController.show(config.heightDp)) {
             failEpoch(epoch, "window add")
