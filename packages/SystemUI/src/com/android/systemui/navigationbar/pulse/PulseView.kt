@@ -41,6 +41,7 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     private val drawLevels = FloatArray(BAR_COUNT)
     private val barLeft = FloatArray(BAR_COUNT)
     private val barRight = FloatArray(BAR_COUNT)
+    private val heightCurve = PulseHeightCurve()
 
     init {
         isClickable = false
@@ -60,6 +61,12 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     /** Sets the bar color, including its alpha. Called on setting changes, never per frame. */
     fun setColor(argb: Int) {
         paint.color = argb
+        postInvalidateOnAnimation()
+    }
+
+    /** Sets the [PulseHeightCurve] strength. Called on setting changes, never per frame. */
+    fun setBoost(strength: Int) {
+        heightCurve.strength = strength
         postInvalidateOnAnimation()
     }
 
@@ -91,7 +98,7 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
 
         val bottom = height.toFloat()
         for (index in drawLevels.indices) {
-            val level = drawLevels[index].coerceIn(0f, 1f)
+            val level = heightCurve.heightFor(drawLevels[index])
             if (level <= 0f) continue
             canvas.drawRect(barLeft[index], bottom * (1f - level), barRight[index], bottom, paint)
         }

@@ -33,6 +33,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.mockito.kotlin.argumentCaptor
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
@@ -67,6 +68,34 @@ class PulseViewTest : SysuiTestCase() {
     }
 
     @Test
+    fun draw_appliesDefaultBoostCurveToLevel() {
+        val top = drawnTop(level = 0.05f)
+
+        assertThat(top).isWithin(1e-3f).of(100f * (1f - PulseHeightCurve().heightFor(0.05f)))
+        assertThat(top).isLessThan(95f)
+    }
+
+    @Test
+    fun draw_withZeroBoost_matchesLinearHeight() {
+        assertThat(drawnTop(level = 0.5f, boost = 0)).isEqualTo(50f)
+        assertThat(drawnTop(level = 0.05f, boost = 0)).isWithin(1e-4f).of(95f)
+    }
+
+    @Test
+    fun draw_atMaxBoost_keepsFullAndSilentEndpoints() {
+        assertThat(drawnTop(level = 1f, boost = 100)).isEqualTo(0f)
+
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        view.layout(0, 0, 320, 100)
+        view.setBoost(100)
+        view.setLevels(floatArrayOf(0f, 0f))
+        view.draw(canvas)
+
+        verify(canvas, never()).drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
+    }
+
+    @Test
     fun setLevels_copiesCallerBuffer() {
         val view = PulseView(mContext)
         val canvas = mock(Canvas::class.java)
@@ -93,5 +122,19 @@ class PulseViewTest : SysuiTestCase() {
         view.draw(canvas)
 
         verify(canvas, never()).drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
+    }
+
+    private fun drawnTop(level: Float, boost: Int? = null): Float {
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        val topCaptor = argumentCaptor<Float>()
+        view.layout(0, 0, 320, 100)
+        boost?.let(view::setBoost)
+        view.setLevels(floatArrayOf(level))
+
+        view.draw(canvas)
+
+        verify(canvas).drawRect(anyFloat(), topCaptor.capture(), anyFloat(), anyFloat(), any())
+        return topCaptor.firstValue
     }
 }

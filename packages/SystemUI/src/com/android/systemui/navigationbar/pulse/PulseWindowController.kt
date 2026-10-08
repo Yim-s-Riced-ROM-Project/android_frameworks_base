@@ -84,6 +84,8 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
 
     fun setColor(argb: Int) = view.setColor(argb)
 
+    fun setBoost(strength: Int) = view.setBoost(strength)
+
     fun setLevels(levels: FloatArray) = view.setLevels(levels)
 
     fun clear() = view.clear()

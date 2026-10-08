@@ -260,6 +260,7 @@ constructor(
         if (!overlayShown) return
         val argb = next.argb(nightMode)
         if (argb != previous.argb(nightMode)) windowController.setColor(argb)
+        if (next.boost != previous.boost) windowController.setBoost(next.boost)
         if (next.heightDp != previous.heightDp && !windowController.updateHeight(next.heightDp)) {
             failEpoch(captureEpoch.get(), "window update")
         }
@@ -360,6 +361,7 @@ constructor(
         pw.println("colorMode=${config.colorMode}")
         pw.println("nightMode=$nightMode")
         pw.println("effectiveColor=#%08X".format(config.argb(nightMode)))
+        pw.println("boost=${config.boost}")
     }
 
     private fun startRuntime(sessionId: Int?) {
@@ -444,6 +446,7 @@ constructor(
 
     private fun showOverlay(epoch: Int, levels: FloatArray) {
         windowController.setColor(config.argb(nightMode))
+        windowController.setBoost(config.boost)
         windowController.setLevels(levels)
         if (!windowController.show(config.heightDp)) {
             failEpoch(epoch, "window add")
