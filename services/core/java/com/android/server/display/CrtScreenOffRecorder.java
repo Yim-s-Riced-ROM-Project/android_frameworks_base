@@ -44,6 +44,11 @@ final class CrtScreenOffRecorder {
         return mRunning;
     }
 
+    /** Whether a CRT transition on {@code path} is running. */
+    boolean isRunning(CrtScreenOffPolicy.Path path) {
+        return mRunning && mLastPath == path;
+    }
+
     /** Marks a CRT transition as running and returns its log line. */
     String started(long uptimeMillis, CrtScreenOffPolicy.Path path, int setting) {
         mRunning = true;

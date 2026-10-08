@@ -504,6 +504,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private int mScreenOffAnimationSetting = CrtScreenOffPolicy.SETTING_STOCK;
     // True from an awake screen-on until the next doze decision or screen-off.
     private boolean mCrtArmedForDoze;
+    // config_skipScreenOffTransition; also gates CRT before doze.
+    private final boolean mSkipScreenOffTransitionConfig;
     private final CrtScreenOffRecorder mCrtRecorder = new CrtScreenOffRecorder();
     private final TimeInterpolator mCrtColorFadeInterpolator = new LinearInterpolator();
     // ValueAnimator's default interpolator, restored so stock fades keep their timing.
@@ -578,9 +580,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         mDisplayPowerProximityStateController = mInjector.getDisplayPowerProximityStateController(
                 mWakelockController, mDisplayDeviceConfig, mHandler.getLooper(),
                 () -> updatePowerState(), mDisplayId, mSensorManager);
+        mSkipScreenOffTransitionConfig =
+                resources.getBoolean(R.bool.config_skipScreenOffTransition);
         mDisplayStateController = new DisplayStateController(
-            mDisplayPowerProximityStateController,
-            resources.getBoolean(R.bool.config_skipScreenOffTransition));
+            mDisplayPowerProximityStateController, mSkipScreenOffTransitionConfig);
         mTag = TAG + "[" + mDisplayId + "]";
 
         mLights = LocalServices.getService(LightsManager.class);
@@ -1758,7 +1761,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             final float currentBrightness = mPowerState.getScreenBrightness();
             final float currentSdrBrightness = mPowerState.getSdrScreenBrightness();
 
+            // While CRT plays before doze the screen is still ON under POLICY_DOZE; keep the
+            // awake brightness until the doze state is applied.
             if (BrightnessUtils.isValidBrightnessValue(animateValue)
+                    && !mCrtRecorder.isRunning(CrtScreenOffPolicy.Path.DOZE)
                     && (animateValue != currentBrightness
                     || sdrAnimateValue != currentSdrBrightness)) {
                 boolean skipAnimation = initialRampSkip || hasBrightnessBuckets
@@ -2572,7 +2578,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             return false;
         }
         if (!prepareCrtColorFade(CrtScreenOffPolicy.Path.DOZE,
-                /* performScreenOffTransition= */ true)) {
+                /* performScreenOffTransition= */ !mSkipScreenOffTransitionConfig)) {
             return false;
         }
         mColorFadeOffAnimator.start();
@@ -2582,7 +2588,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     /** Prepares MODE_CRT and CRT timing when the policy allows; records any fallback. */
     private boolean prepareCrtColorFade(CrtScreenOffPolicy.Path path,
             boolean performScreenOffTransition) {
-        CrtScreenOffPolicy.Decision decision = CrtScreenOffPolicy.decide(path,
+        CrtScreenOffPolicy.Decision decision = CrtScreenOffPolicy.decide(
                 mScreenOffAnimationSetting, mDisplayId == Display.DEFAULT_DISPLAY,
                 mColorFadeEnabled, performScreenOffTransition,
                 mPowerState.getScreenState() == Display.STATE_ON);

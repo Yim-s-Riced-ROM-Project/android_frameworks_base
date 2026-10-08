@@ -17,7 +17,6 @@
 package com.android.server.display;
 
 import static com.android.server.display.CrtScreenOffPolicy.Decision;
-import static com.android.server.display.CrtScreenOffPolicy.Path;
 import static com.android.server.display.CrtScreenOffPolicy.SETTING_CRT;
 import static com.android.server.display.CrtScreenOffPolicy.SETTING_STOCK;
 import static com.android.server.display.CrtScreenOffPolicy.decide;
@@ -38,35 +37,36 @@ public class CrtScreenOffPolicyTest {
     }
 
     @Test
-    public void crtSelected_eligibleOff_playsCrt() {
-        assertEquals(Decision.CRT, decide(Path.OFF, SETTING_CRT, true, true, true, true));
+    public void crtSelected_eligible_playsCrt() {
+        assertEquals(Decision.CRT, decide(SETTING_CRT, true, true, true, true));
     }
 
     @Test
-    public void crtSelected_eligibleDoze_playsCrtEvenWithoutOffTransition() {
-        assertEquals(Decision.CRT, decide(Path.DOZE, SETTING_CRT, true, true, false, true));
+    public void skipScreenOffTransition_fallsBackOnEitherPath() {
+        assertEquals(Decision.SKIP_SCREEN_OFF_TRANSITION,
+                decide(SETTING_CRT, true, true, false, true));
     }
 
     @Test
     public void anyValueOtherThanCrt_isStock() {
         assertEquals(Decision.STOCK_SELECTED,
-                decide(Path.OFF, SETTING_STOCK, true, true, true, true));
-        assertEquals(Decision.STOCK_SELECTED, decide(Path.OFF, 2, true, true, true, true));
-        assertEquals(Decision.STOCK_SELECTED, decide(Path.OFF, -1, true, true, true, true));
+                decide(SETTING_STOCK, true, true, true, true));
+        assertEquals(Decision.STOCK_SELECTED, decide(2, true, true, true, true));
+        assertEquals(Decision.STOCK_SELECTED, decide(-1, true, true, true, true));
     }
 
     @Test
     public void gates_rejectInOrder() {
         assertEquals(Decision.STOCK_SELECTED,
-                decide(Path.OFF, SETTING_STOCK, false, false, false, false));
+                decide(SETTING_STOCK, false, false, false, false));
         assertEquals(Decision.NOT_DEFAULT_DISPLAY,
-                decide(Path.OFF, SETTING_CRT, false, false, false, false));
+                decide(SETTING_CRT, false, false, false, false));
         assertEquals(Decision.COLOR_FADE_DISABLED,
-                decide(Path.OFF, SETTING_CRT, true, false, false, false));
+                decide(SETTING_CRT, true, false, false, false));
         assertEquals(Decision.SKIP_SCREEN_OFF_TRANSITION,
-                decide(Path.OFF, SETTING_CRT, true, true, false, false));
+                decide(SETTING_CRT, true, true, false, false));
         assertEquals(Decision.DISPLAY_NOT_ON,
-                decide(Path.OFF, SETTING_CRT, true, true, true, false));
+                decide(SETTING_CRT, true, true, true, false));
     }
 
     @Test

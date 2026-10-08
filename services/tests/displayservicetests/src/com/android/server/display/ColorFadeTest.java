@@ -67,6 +67,8 @@ public class ColorFadeTest {
         info.logicalWidth = 100;
         info.logicalHeight = 200;
         info.logicalDensityDpi = 320;
+        // An unused layer stack keeps the test layers off the device's real display.
+        info.layerStack = Integer.MAX_VALUE - 1;
         when(mDisplayManagerInternalMock.getDisplayInfo(eq(DISPLAY_ID))).thenReturn(info);
         ColorFade colorFade = new ColorFade(DISPLAY_ID, mDisplayManagerInternalMock);
 

@@ -48,15 +48,16 @@ final class CrtScreenOffPolicy {
     private CrtScreenOffPolicy() {}
 
     /**
-     * Returns the first rejecting gate, or {@link Decision#CRT}. {@code performScreenOffTransition}
-     * applies only to {@link Path#OFF}; the doze path has no stock screen-off transition.
+     * Returns the first rejecting gate, or {@link Decision#CRT}. Both paths pass whether a
+     * screen-off transition may run: the power request's flag for OFF, the device config for
+     * DOZE.
      */
-    static Decision decide(Path path, int settingValue, boolean defaultDisplay,
+    static Decision decide(int settingValue, boolean defaultDisplay,
             boolean colorFadeEnabled, boolean performScreenOffTransition, boolean screenOn) {
         if (settingValue != SETTING_CRT) return Decision.STOCK_SELECTED;
         if (!defaultDisplay) return Decision.NOT_DEFAULT_DISPLAY;
         if (!colorFadeEnabled) return Decision.COLOR_FADE_DISABLED;
-        if (path == Path.OFF && !performScreenOffTransition) {
+        if (!performScreenOffTransition) {
             return Decision.SKIP_SCREEN_OFF_TRANSITION;
         }
         if (!screenOn) return Decision.DISPLAY_NOT_ON;

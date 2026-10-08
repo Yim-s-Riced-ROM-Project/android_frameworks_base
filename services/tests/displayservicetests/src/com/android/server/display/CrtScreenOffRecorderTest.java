@@ -49,6 +49,16 @@ public class CrtScreenOffRecorderTest {
     }
 
     @Test
+    public void isRunning_path_matchesOnlyTheRunningPath() {
+        assertFalse(mRecorder.isRunning(Path.DOZE));
+        mRecorder.started(0, Path.DOZE, 1);
+        assertTrue(mRecorder.isRunning(Path.DOZE));
+        assertFalse(mRecorder.isRunning(Path.OFF));
+        mRecorder.ended(500, CrtScreenOffRecorder.Result.COMPLETED);
+        assertFalse(mRecorder.isRunning(Path.DOZE));
+    }
+
+    @Test
     public void endWithoutStart_isNoOp() {
         assertNull(mRecorder.ended(1, CrtScreenOffRecorder.Result.COMPLETED));
         assertTrue(dump().contains("completions=0"));

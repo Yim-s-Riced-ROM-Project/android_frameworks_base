@@ -29,7 +29,9 @@ import static com.android.server.display.TestUtilsKt.createSensorEvent;
 import static com.android.server.display.config.DisplayDeviceConfigTestUtilsKt.createSensorData;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyFloat;
@@ -50,6 +52,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import android.animation.ObjectAnimator;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.res.Resources;
@@ -75,6 +78,8 @@ import android.util.FloatProperty;
 import android.util.SparseArray;
 import android.view.Display;
 import android.view.DisplayInfo;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
@@ -111,6 +116,7 @@ import org.mockito.Mock;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
 @SmallTest
@@ -2554,8 +2560,91 @@ public final class DisplayPowerControllerTest {
         verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
     }
 
-    // prepareColorFade() on the mock returns false, so no test starts the real ObjectAnimator,
-    // which needs a Looper thread.
+    @Test
+    public void crtFallback_restoresStockColorFadeTiming() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        ObjectAnimator animator = colorFadeOffAnimator();
+        assertEquals(400L, animator.getDuration());
+        assertTrue(animator.getInterpolator() instanceof AccelerateDecelerateInterpolator);
+    }
+
+    @Test
+    public void crtSelected_screenOff_runsLinear500msAnimator() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        ObjectAnimator animator = colorFadeOffAnimator();
+        assertTrue(animator.isStarted());
+        assertEquals(500L, animator.getDuration());
+        assertTrue(animator.getInterpolator() instanceof LinearInterpolator);
+    }
+
+    @Test
+    public void crtSelected_wakeDuringAnimation_cancelsAndDismisses() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+        clearInvocations(mHolder.displayPowerState);
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+
+        assertFalse(colorFadeOffAnimator().isStarted());
+        verify(mHolder.displayPowerState).setColorFadeLevel(1.0f);
+        verify(mHolder.displayPowerState).dismissColorFade();
+    }
+
+    @Test
+    public void crtSelected_dozeAnimationEnd_appliesDozeState() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+
+        requestPolicy(DisplayPowerRequest.POLICY_DOZE);
+        verify(mHolder.displayPowerState, never()).setScreenState(eq(Display.STATE_DOZE), anyInt());
+
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(0.0f);
+        colorFadeOffAnimator().end();
+        advanceTime(1); // Run the update the animator end listener sends
+
+        verify(mHolder.displayPowerState).setScreenState(eq(Display.STATE_DOZE), anyInt());
+    }
+
+    @Test
+    public void crtSelected_dozeAnimation_keepsAwakeBrightness() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        clearInvocations(mHolder.animator);
+
+        DisplayPowerRequest dpr = new DisplayPowerRequest();
+        dpr.policy = DisplayPowerRequest.POLICY_DOZE;
+        dpr.dozeScreenBrightness = 0.05f;
+        mHolder.dpc.requestPowerState(dpr, /* waitForNegativeProximity= */ false);
+        advanceTime(1);
+
+        assertTrue(colorFadeOffAnimator().isStarted());
+        verify(mHolder.animator, never()).animateTo(anyFloat(), anyFloat(), anyFloat(),
+                anyBoolean());
+    }
+
     private void setScreenOffAnimationSetting(int value) {
         Settings.Secure.putIntForUser(mContext.getContentResolver(),
                 "lineage_screen_off_animation", value, UserHandle.USER_CURRENT);
@@ -2564,6 +2653,21 @@ public final class DisplayPowerControllerTest {
     private void givenScreenOnAndUnfaded() {
         when(mHolder.displayPowerState.getScreenState()).thenReturn(Display.STATE_ON);
         when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(1.0f);
+    }
+
+    private void givenCrtPrepareSucceeds() {
+        when(mHolder.displayPowerState.prepareColorFade(any(), eq(ColorFade.MODE_CRT)))
+                .thenReturn(true);
+    }
+
+    private ObjectAnimator colorFadeOffAnimator() {
+        try {
+            Field field = DisplayPowerController.class.getDeclaredField("mColorFadeOffAnimator");
+            field.setAccessible(true);
+            return (ObjectAnimator) field.get(mHolder.dpc);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private void requestPolicy(int policy) {
