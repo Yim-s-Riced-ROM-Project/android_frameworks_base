@@ -155,6 +155,34 @@ class PulseSettingsRepositoryTest : SysuiTestCase() {
     }
 
     @Test
+    fun config_boostDefaultsToTwenty() = runTest {
+        assertThat(underTest.config.first().boost).isEqualTo(20)
+    }
+
+    @Test
+    fun pulseConfig_boostDefaultsToTwenty() {
+        assertThat(PulseConfig(enabled = true, color = 0x123456, heightDp = 48).boost)
+            .isEqualTo(20)
+    }
+
+    @Test
+    fun config_clampsBoostToSupportedRange() = runTest {
+        secureSettingsRepository.setInt(PulseSettingsRepository.BOOST_KEY, -1)
+        assertThat(underTest.config.first().boost).isEqualTo(0)
+
+        secureSettingsRepository.setInt(PulseSettingsRepository.BOOST_KEY, 101)
+        assertThat(underTest.config.first().boost).isEqualTo(100)
+    }
+
+    @Test
+    fun config_passesInRangeBoostThrough() = runTest {
+        for (boost in listOf(0, 20, 100)) {
+            secureSettingsRepository.setInt(PulseSettingsRepository.BOOST_KEY, boost)
+            assertThat(underTest.config.first().boost).isEqualTo(boost)
+        }
+    }
+
+    @Test
     fun config_alphaFollowsSettingChangesForSelectedUser() {
         val kosmos = userAwareKosmos()
         kosmos.testScope.runTest {

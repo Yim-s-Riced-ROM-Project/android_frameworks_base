@@ -436,6 +436,34 @@ class PulseControllerTest {
     }
 
     @Test
+    fun overlayShow_appliesConfiguredBoost() {
+        settings.value = settings.value.copy(boost = 0)
+
+        showOverlay()
+
+        inOrder(windowController) {
+            verify(windowController).setBoost(0)
+            verify(windowController).show(any())
+        }
+    }
+
+    @Test
+    fun boostChange_updatesCurveWithoutRestart() {
+        showOverlay()
+        val epochBefore = dumpValue("captureEpoch")
+
+        settings.value = settings.value.copy(boost = 100)
+        runMain()
+
+        assertThat(dumpValue("captureEpoch")).isEqualTo(epochBefore)
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+        verify(windowController).setBoost(100)
+        verify(windowController, never()).hide()
+        verify(windowController, times(1)).show(any())
+    }
+
+    @Test
     fun heightUpdateFailure_tearsDownAndLatches() {
         showOverlay()
         whenever(windowController.updateHeight(any())).thenReturn(false)
@@ -673,6 +701,14 @@ class PulseControllerTest {
     }
 
     @Test
+    fun dump_reportsCurrentBoost() {
+        settings.value = settings.value.copy(boost = 100)
+        showOverlay()
+
+        assertThat(dump()).contains("boost=100\n")
+    }
+
+    @Test
     fun dump_reportsFirstFalseGate() {
         playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
         activateHost(PulseHost.NAVIGATION_BAR)
@@ -877,6 +913,9 @@ class PulseControllerTest {
     private fun dump(): String =
         StringWriter().also { underTest.dump(PrintWriter(it), emptyArray()) }.toString()
 
+    private fun dumpValue(name: String): String =
+        Regex("(?m)^$name=(.*)$").find(dump())!!.groupValues[1]
+
     private fun logMessages(): List<String> = loggedMessages.toList()
 
     private fun createController(displayId: Int) =
@@ -1043,6 +1082,7 @@ class PulseControllerTest {
                 "colorMode",
                 "nightMode",
                 "effectiveColor",
+                "boost",
             )
     }
 }
