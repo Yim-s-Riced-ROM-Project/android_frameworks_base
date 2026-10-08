@@ -19,11 +19,16 @@ package com.android.server.display;
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.hardware.display.DisplayManagerInternal;
+import android.view.DisplayInfo;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
@@ -54,5 +59,24 @@ public class ColorFadeTest {
         when(mDisplayManagerInternalMock.getDisplayInfo(eq(DISPLAY_ID))).thenReturn(null);
         ColorFade colorFade = new ColorFade(DISPLAY_ID, mDisplayManagerInternalMock);
         assertFalse(colorFade.prepare(mContext, ColorFade.MODE_FADE));
+    }
+
+    @Test
+    public void testPrepareCrtNeverCapturesScreen() {
+        DisplayInfo info = new DisplayInfo();
+        info.logicalWidth = 100;
+        info.logicalHeight = 200;
+        info.logicalDensityDpi = 320;
+        // An unused layer stack keeps the test layers off the device's real display.
+        info.layerStack = Integer.MAX_VALUE - 1;
+        when(mDisplayManagerInternalMock.getDisplayInfo(eq(DISPLAY_ID))).thenReturn(info);
+        ColorFade colorFade = new ColorFade(DISPLAY_ID, mDisplayManagerInternalMock);
+
+        assertTrue(colorFade.prepare(mContext, ColorFade.MODE_CRT));
+        assertTrue(colorFade.draw(0.25f));
+        assertTrue(colorFade.draw(0f));
+        colorFade.dismiss();
+
+        verify(mDisplayManagerInternalMock, never()).systemScreenshot(anyInt());
     }
 }

@@ -31,6 +31,7 @@ import android.opengl.EGLDisplay;
 import android.opengl.EGLSurface;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
+import android.util.DisplayMetrics;
 import android.util.Slog;
 import android.view.Display;
 import android.view.DisplayInfo;
@@ -126,6 +127,12 @@ final class ColorFade {
 
     private final Transaction mTransaction = new Transaction();
 
+    // MODE_CRT: one colour layer per CrtCollapseFrame layer, children of mSurfaceControl.
+    private final CrtCollapseFrame mCrtFrame = new CrtCollapseFrame();
+    private final SurfaceControl[] mCrtLayers = new SurfaceControl[CrtCollapseFrame.LAYER_COUNT];
+    private float mCrtDensity;
+    private boolean mSurfaceIsCrt;
+
     /**
      * Animates an color fade warming up.
      */
@@ -140,6 +147,11 @@ final class ColorFade {
      * Animates a simple dim layer to fade the contents of the screen in or out progressively.
      */
     public static final int MODE_FADE = 2;
+
+    /**
+     * Draws the CRT collapse as solid-colour layers over live content. Captures nothing.
+     */
+    public static final int MODE_CRT = 3;
 
     public ColorFade(int displayId) {
         this(displayId, LocalServices.getService(DisplayManagerInternal.class));
@@ -179,6 +191,20 @@ final class ColorFade {
         mDisplayHeight = displayInfo.getNaturalHeight();
 
         final boolean isWideColor = displayInfo.colorMode == Display.COLOR_MODE_DISPLAY_P3;
+        if (mSurfaceControl != null && mSurfaceIsCrt != (mode == MODE_CRT)) {
+            // The CRT container and the screenshot surfaces are not interchangeable.
+            dismissResources();
+            destroySurface();
+        }
+        if (mode == MODE_CRT) {
+            mCrtDensity = displayInfo.logicalDensityDpi / (float) DisplayMetrics.DENSITY_DEFAULT;
+            mPrepared = true;
+            if (!createCrtSurface()) {
+                dismiss();
+                return false;
+            }
+            return true;
+        }
         // Set mPrepared here so if initialization fails, resources can be cleaned up.
         mPrepared = true;
 
@@ -451,6 +477,10 @@ final class ColorFade {
 
         if (!mPrepared) {
             return false;
+        }
+
+        if (mMode == MODE_CRT) {
+            return drawCrt(level);
         }
 
         if (mMode == MODE_FADE) {
@@ -770,9 +800,18 @@ final class ColorFade {
 
     private void destroySurface() {
         if (mSurfaceControl != null) {
-            mSurfaceLayout.dispose();
+            if (mSurfaceLayout != null) {
+                mSurfaceLayout.dispose();
+            }
             mSurfaceLayout = null;
             mTransaction.remove(mSurfaceControl).apply();
+            for (int i = 0; i < mCrtLayers.length; i++) {
+                if (mCrtLayers[i] != null) {
+                    mCrtLayers[i].release();
+                    mCrtLayers[i] = null;
+                }
+            }
+            mSurfaceIsCrt = false;
             if (mSurface != null) {
                 mSurface.release();
                 mSurface = null;
@@ -789,6 +828,69 @@ final class ColorFade {
             mSurfaceVisible = false;
             mSurfaceAlpha = 0f;
         }
+    }
+
+    private boolean createCrtSurface() {
+        if (mSurfaceControl != null) {
+            return true; // Reuse the container from an unfinished CRT transition.
+        }
+        try {
+            mSurfaceControl = new SurfaceControl.Builder()
+                    .setName("ColorFade CRT")
+                    .setContainerLayer()
+                    .setCallsite("ColorFade.createCrtSurface")
+                    .build();
+            // Set once the container exists, so destroySurface() releases any partial layers.
+            mSurfaceIsCrt = true;
+            for (int i = 0; i < CrtCollapseFrame.LAYER_COUNT; i++) {
+                mCrtLayers[i] = new SurfaceControl.Builder()
+                        .setName("ColorFade CRT layer")
+                        .setColorLayer()
+                        .setParent(mSurfaceControl)
+                        .setCallsite("ColorFade.createCrtSurface")
+                        .build();
+                mTransaction.setColor(mCrtLayers[i], CrtCollapseFrame.LAYER_RGB[i])
+                        .setLayer(mCrtLayers[i], i)
+                        .setAlpha(mCrtLayers[i], 0f)
+                        .show(mCrtLayers[i]);
+            }
+        } catch (OutOfResourcesException ex) {
+            Slog.e(TAG, "Unable to create CRT surface.", ex);
+            return false;
+        }
+        mTransaction.setLayerStack(mSurfaceControl, mDisplayLayerStack);
+        mTransaction.setWindowCrop(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+        mSurfaceLayout = new NaturalSurfaceLayout(mDisplayManagerInternal, mDisplayId,
+                mSurfaceControl);
+        mSurfaceLayout.onDisplayTransaction(mTransaction);
+        mTransaction.apply();
+        return true;
+    }
+
+    /**
+     * Applies one CRT frame in a single transaction. Allocates nothing. A layer without area gets
+     * alpha 0, because SurfaceFlinger treats an empty crop as no crop and would fill the display.
+     */
+    private boolean drawCrt(float level) {
+        mCrtFrame.update(level, mDisplayWidth, mDisplayHeight, mCrtDensity);
+        for (int i = 0; i < CrtCollapseFrame.LAYER_COUNT; i++) {
+            final float l = mCrtFrame.left[i];
+            final float t = mCrtFrame.top[i];
+            final float r = mCrtFrame.right[i];
+            final float b = mCrtFrame.bottom[i];
+            final boolean hasArea = r > l && b > t;
+            mTransaction.setAlpha(mCrtLayers[i], hasArea ? mCrtFrame.alpha[i] : 0f);
+            if (hasArea) {
+                mTransaction.setCrop(mCrtLayers[i], l, t, r, b);
+            }
+        }
+        mTransaction.setLayer(mSurfaceControl, COLOR_FADE_LAYER)
+                .setAlpha(mSurfaceControl, 1f)
+                .show(mSurfaceControl)
+                .apply();
+        mSurfaceVisible = true;
+        mSurfaceAlpha = 1f;
+        return true;
     }
 
     private boolean showSurface(float alpha) {
@@ -858,6 +960,7 @@ final class ColorFade {
         pw.println("Color Fade State:");
         pw.println("  mPrepared=" + mPrepared);
         pw.println("  mMode=" + mMode);
+        pw.println("  mSurfaceIsCrt=" + mSurfaceIsCrt);
         pw.println("  mDisplayLayerStack=" + mDisplayLayerStack);
         pw.println("  mDisplayWidth=" + mDisplayWidth);
         pw.println("  mDisplayHeight=" + mDisplayHeight);
