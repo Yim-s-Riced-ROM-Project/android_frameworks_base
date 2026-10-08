@@ -43,10 +43,16 @@ internal object PulseBarResampler {
             bars.fill(bands[0])
             return
         }
-        val step = (bands.size - 1).toFloat() / (bars.size - 1)
+        val lastBand = bands.size - 1
+        val lastBar = bars.size - 1
         for (index in bars.indices) {
-            val position = index * step
-            val lower = position.toInt().coerceAtMost(bands.size - 2)
+            // Integer numerator keeps both end bars exactly on the end bands.
+            val position = (index * lastBand).toFloat() / lastBar
+            val lower = position.toInt()
+            if (lower >= lastBand) {
+                bars[index] = bands[lastBand]
+                continue
+            }
             val fraction = position - lower
             bars[index] = bands[lower] + (bands[lower + 1] - bands[lower]) * fraction
         }

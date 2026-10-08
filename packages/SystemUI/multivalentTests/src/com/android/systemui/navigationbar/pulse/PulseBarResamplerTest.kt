@@ -17,6 +17,7 @@ package com.android.systemui.navigationbar.pulse
 
 import com.google.common.collect.Range
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Test
 
 class PulseBarResamplerTest {
@@ -41,15 +42,19 @@ class PulseBarResamplerTest {
     }
 
     @Test
-    fun resample_moreBars_staysWithinNeighbouringBands() {
+    fun resample_everyHigherCount_hitsEndBandsExactlyWithoutOvershoot() {
         val bands = FloatArray(32) { if (it % 2 == 0) 0.2f else 0.9f }
-        val bars = FloatArray(64)
+        for (count in 33..64) {
+            val bars = FloatArray(count)
 
-        PulseBarResampler.resample(bands, bars)
+            PulseBarResampler.resample(bands, bars)
 
-        assertThat(bars.first()).isEqualTo(0.2f)
-        assertThat(bars.last()).isEqualTo(0.9f)
-        for (level in bars) assertThat(level).isIn(Range.closed(0.2f, 0.9f))
+            assertWithMessage("first of $count").that(bars.first()).isEqualTo(bands.first())
+            assertWithMessage("last of $count").that(bars.last()).isEqualTo(bands.last())
+            for (level in bars) {
+                assertWithMessage("$count bars").that(level).isIn(Range.closed(0.2f, 0.9f))
+            }
+        }
     }
 
     @Test

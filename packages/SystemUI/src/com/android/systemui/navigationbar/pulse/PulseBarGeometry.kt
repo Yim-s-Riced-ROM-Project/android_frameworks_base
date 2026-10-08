@@ -21,7 +21,8 @@ package com.android.systemui.navigationbar.pulse
  * requested gap, as a percent of the slot, half from each side.
  *
  * A bar is never narrower than [MIN_BAR_WIDTH_PX]: if the requested gap would leave less, the gap
- * shrinks instead. Only a slot narrower than that minimum draws narrower bars, with no gap.
+ * shrinks instead. Only a slot narrower than that minimum draws narrower bars, with no gap. A
+ * negative gap reads as 0.
  *
  * Kept free of Android types so it tests on a plain JVM.
  */
@@ -37,7 +38,7 @@ internal object PulseBarGeometry {
         if (widthPx <= 0 || count == 0) return 0f
 
         val slot = widthPx.toFloat() / count
-        val requestedGap = slot * gapPercent / 100f
+        val requestedGap = (slot * gapPercent / 100f).coerceAtLeast(0f)
         val gap =
             if (slot - requestedGap >= MIN_BAR_WIDTH_PX) requestedGap
             else (slot - MIN_BAR_WIDTH_PX).coerceAtLeast(0f)

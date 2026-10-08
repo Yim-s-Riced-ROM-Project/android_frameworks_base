@@ -76,6 +76,18 @@ class PulseBarGeometryTest {
     }
 
     @Test
+    fun layout_negativeGap_readsAsZero() {
+        val left = FloatArray(16)
+        val right = FloatArray(16)
+
+        val gap = PulseBarGeometry.layout(1000, -20, left, right)
+
+        assertThat(gap).isEqualTo(0f)
+        assertThat(left.first()).isEqualTo(0f)
+        assertThat(right.last()).isWithin(1e-3f).of(1000f)
+    }
+
+    @Test
     fun layout_withoutWidthOrBars_leavesArraysAndReturnsZero() {
         val left = floatArrayOf(7f)
         val right = floatArrayOf(9f)
