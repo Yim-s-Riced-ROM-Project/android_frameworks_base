@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.intThat;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
@@ -2488,6 +2489,88 @@ public final class DisplayPowerControllerTest {
 
         // The conditions are met, so prepareColorFade() is invoked.
         verify(mHolder.displayPowerState).prepareColorFade(any(), anyInt());
+    }
+
+    @Test
+    public void crtSelected_screenOffFromOn_preparesCrtThenFallsBackWhenPrepareFails() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        InOrder order = inOrder(mHolder.displayPowerState);
+        order.verify(mHolder.displayPowerState).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+        order.verify(mHolder.displayPowerState).prepareColorFade(any(),
+                intThat(mode -> mode != ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void stockSelected_screenOff_neverPreparesCrt() {
+        setScreenOffAnimationSetting(0);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void crtSelected_dozeFromAwakeScreen_preparesCrtBeforeDoze() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_DOZE);
+
+        verify(mHolder.displayPowerState).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void crtSelected_dozeWithoutAwakeScreenOn_neverPreparesCrt() {
+        // A doze pulse turns the screen on under POLICY_DOZE; its end must not play CRT.
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_DOZE);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void crtSelected_secondaryDisplay_neverPreparesCrt() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(FOLLOWER_DISPLAY_ID, FOLLOWER_UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    // prepareColorFade() on the mock returns false, so no test starts the real ObjectAnimator,
+    // which needs a Looper thread.
+    private void setScreenOffAnimationSetting(int value) {
+        Settings.Secure.putIntForUser(mContext.getContentResolver(),
+                "lineage_screen_off_animation", value, UserHandle.USER_CURRENT);
+    }
+
+    private void givenScreenOnAndUnfaded() {
+        when(mHolder.displayPowerState.getScreenState()).thenReturn(Display.STATE_ON);
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(1.0f);
+    }
+
+    private void requestPolicy(int policy) {
+        DisplayPowerRequest dpr = new DisplayPowerRequest();
+        dpr.policy = policy;
+        mHolder.dpc.requestPowerState(dpr, /* waitForNegativeProximity= */ false);
+        advanceTime(1); // Run updatePowerState
     }
 
     /**

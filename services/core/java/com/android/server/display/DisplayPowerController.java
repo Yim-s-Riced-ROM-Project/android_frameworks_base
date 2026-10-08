@@ -27,6 +27,7 @@ import static com.android.server.display.config.DisplayBrightnessMappingConfig.a
 
 import android.animation.Animator;
 import android.animation.ObjectAnimator;
+import android.animation.TimeInterpolator;
 import android.annotation.FloatRange;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
@@ -68,6 +69,8 @@ import android.util.MutableInt;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Display;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -148,6 +151,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private static final float SCREEN_ANIMATION_RATE_MINIMUM = 0.0f;
 
     private static final int COLOR_FADE_OFF_ANIMATION_DURATION_MILLIS = 400;
+
+    private static final String CRT_TAG = "CrtScreenOffAnimation";
+    private static final int CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS = 500;
 
     private static final int MSG_UPDATE_POWER_STATE = 1;
     private static final int MSG_SCREEN_ON_UNBLOCKED = 2;
@@ -493,6 +499,16 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
     // Animators.
     private ObjectAnimator mColorFadeOffAnimator;
+
+    // CRT screen-off animation: setting cache (handler thread) and transition record.
+    private int mScreenOffAnimationSetting = CrtScreenOffPolicy.SETTING_STOCK;
+    // True from an awake screen-on until the next doze decision or screen-off.
+    private boolean mCrtArmedForDoze;
+    private final CrtScreenOffRecorder mCrtRecorder = new CrtScreenOffRecorder();
+    private final TimeInterpolator mCrtColorFadeInterpolator = new LinearInterpolator();
+    // ValueAnimator's default interpolator, restored so stock fades keep their timing.
+    private final TimeInterpolator mStockColorFadeInterpolator =
+            new AccelerateDecelerateInterpolator();
     private DualRampAnimator<DisplayPowerState> mScreenBrightnessRampAnimator;
 
     // True if this DisplayPowerController has been stopped and should no longer be running.
@@ -763,6 +779,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         }
 
         handleBrightnessModeChange();
+        updateScreenOffAnimationSetting();
         if (mBrightnessTracker != null) {
             mBrightnessTracker.onSwitchUser(newUserId);
         }
@@ -1067,6 +1084,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         mContext.getContentResolver().registerContentObserver(
                 LineageSettings.System.getUriFor(LineageSettings.System.AUTO_BRIGHTNESS_ONE_SHOT),
                 false /*notifyForDescendants*/, mSettingsObserver, UserHandle.USER_ALL);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(CrtScreenOffPolicy.SETTING_KEY),
+                false /*notifyForDescendants*/, mSettingsObserver, UserHandle.USER_ALL);
+        updateScreenOffAnimationSetting();
         handleBrightnessModeChange();
     }
 
@@ -1279,6 +1300,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
         @Override
         public void onAnimationEnd(Animator animation) {
+            logCrt(mCrtRecorder.ended(mClock.uptimeMillis(),
+                    CrtScreenOffRecorder.Result.COMPLETED));
             sendUpdatePowerState();
         }
 
@@ -2368,6 +2391,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             }
             // If display state changed to on, proceed and stop the color fade and turn screen on.
             mPendingScreenOff = false;
+            cancelCrtForWake();
         }
 
         if (mFlags.isEnsureColorFadeWhenTurningOnEnabled()
@@ -2416,7 +2440,14 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             }
             mPowerState.setColorFadeLevel(1.0f);
             mPowerState.dismissColorFade();
+            if (mPowerRequest.isBrightOrDim()) {
+                // Only a screen turned on for an awake user arms CRT; a doze pulse never does.
+                mCrtArmedForDoze = true;
+            }
         } else if (target == Display.STATE_DOZE) {
+            if (playCrtBeforeDoze()) {
+                return;
+            }
             // Want screen dozing.
             // Wait for brightness animation to complete beforehand when entering doze
             // from screen on to prevent a perceptible jump because brightness may operate
@@ -2435,6 +2466,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.setColorFadeLevel(1.0f);
             mPowerState.dismissColorFade();
         } else if (target == Display.STATE_DOZE_SUSPEND) {
+            if (playCrtBeforeDoze()) {
+                return;
+            }
             // Want screen dozing and suspended.
             // Wait for brightness animation to complete beforehand unless already
             // suspended because we may not be able to change it after suspension.
@@ -2478,6 +2512,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.dismissColorFade();
         } else {
             // Want screen off.
+            mCrtArmedForDoze = false;
             mPendingScreenOff = true;
             if (!mColorFadeEnabled) {
                 mPowerState.setColorFadeLevel(0.0f);
@@ -2489,10 +2524,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 setScreenState(Display.STATE_OFF, reason);
                 mPendingScreenOff = false;
                 mPowerState.dismissColorFadeResources();
-            } else if (performScreenOffTransition
-                    && mPowerState.prepareColorFade(mContext,
-                    mColorFadeFadesConfig
-                            ? ColorFade.MODE_FADE : ColorFade.MODE_COOL_DOWN)
+            } else if (prepareScreenOffColorFade(performScreenOffTransition)
                     && mPowerState.getScreenState() != Display.STATE_OFF) {
                 // Perform the screen off animation.
                 mColorFadeOffAnimator.start();
@@ -2501,6 +2533,89 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 // contents of the screen.
                 mColorFadeOffAnimator.end();
             }
+        }
+    }
+
+    private void updateScreenOffAnimationSetting() {
+        mScreenOffAnimationSetting = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                CrtScreenOffPolicy.SETTING_KEY, CrtScreenOffPolicy.SETTING_STOCK,
+                UserHandle.USER_CURRENT);
+    }
+
+    /** Prepares the screen-off fade: CRT when selected and possible, otherwise stock. */
+    private boolean prepareScreenOffColorFade(boolean performScreenOffTransition) {
+        if (prepareCrtColorFade(CrtScreenOffPolicy.Path.OFF, performScreenOffTransition)) {
+            return true;
+        }
+        if (!performScreenOffTransition) {
+            return false;
+        }
+        mColorFadeOffAnimator.setDuration(COLOR_FADE_OFF_ANIMATION_DURATION_MILLIS);
+        mColorFadeOffAnimator.setInterpolator(mStockColorFadeInterpolator);
+        return mPowerState.prepareColorFade(mContext,
+                mColorFadeFadesConfig ? ColorFade.MODE_FADE : ColorFade.MODE_COOL_DOWN);
+    }
+
+    /**
+     * Plays the CRT animation while the display is still ON and a doze state is requested, but
+     * only when the screen was turned on for an awake user (see mCrtArmedForDoze). Returns true
+     * when it starts; the next pass finds the arm consumed and applies the doze state.
+     */
+    private boolean playCrtBeforeDoze() {
+        if (!mCrtArmedForDoze) {
+            return false;
+        }
+        // Consumed by the first doze decision, whether CRT plays or falls back.
+        mCrtArmedForDoze = false;
+        if (mPowerState.getScreenState() != Display.STATE_ON
+                || mPowerState.getColorFadeLevel() < 1.0f) {
+            return false;
+        }
+        if (!prepareCrtColorFade(CrtScreenOffPolicy.Path.DOZE,
+                /* performScreenOffTransition= */ true)) {
+            return false;
+        }
+        mColorFadeOffAnimator.start();
+        return true;
+    }
+
+    /** Prepares MODE_CRT and CRT timing when the policy allows; records any fallback. */
+    private boolean prepareCrtColorFade(CrtScreenOffPolicy.Path path,
+            boolean performScreenOffTransition) {
+        CrtScreenOffPolicy.Decision decision = CrtScreenOffPolicy.decide(path,
+                mScreenOffAnimationSetting, mDisplayId == Display.DEFAULT_DISPLAY,
+                mColorFadeEnabled, performScreenOffTransition,
+                mPowerState.getScreenState() == Display.STATE_ON);
+        if (decision == CrtScreenOffPolicy.Decision.CRT
+                && !mPowerState.prepareColorFade(mContext, ColorFade.MODE_CRT)) {
+            decision = CrtScreenOffPolicy.Decision.PREPARE_FAILED;
+        }
+        final long now = mClock.uptimeMillis();
+        if (decision != CrtScreenOffPolicy.Decision.CRT) {
+            if (decision.isRecordedFallback()) {
+                logCrt(mCrtRecorder.fallback(now, path, mScreenOffAnimationSetting, decision));
+            }
+            return false;
+        }
+        mColorFadeOffAnimator.setDuration(CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS);
+        mColorFadeOffAnimator.setInterpolator(mCrtColorFadeInterpolator);
+        logCrt(mCrtRecorder.started(now, path, mScreenOffAnimationSetting));
+        return true;
+    }
+
+    /** Records a wake during CRT and stops the animator before the screen turns on. */
+    private void cancelCrtForWake() {
+        final String line = mCrtRecorder.ended(mClock.uptimeMillis(),
+                CrtScreenOffRecorder.Result.CANCELLED_WAKE);
+        if (line != null) {
+            logCrt(line);
+            mColorFadeOffAnimator.cancel();
+        }
+    }
+
+    private static void logCrt(String line) {
+        if (line != null) {
+            Slog.i(CRT_TAG, line);
         }
     }
 
@@ -2745,6 +2860,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             pw.println("  mColorFadeOffAnimator.isStarted()="
                     + mColorFadeOffAnimator.isStarted());
         }
+        pw.println("  mScreenOffAnimationSetting=" + mScreenOffAnimationSetting);
+        pw.println("  mCrtArmedForDoze=" + mCrtArmedForDoze);
+        mCrtRecorder.dump(pw);
 
         pw.println();
         if (mPowerState != null) {
@@ -3290,6 +3408,11 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
         @Override
         public void onChange(boolean selfChange, Uri uri) {
+            if (uri.equals(Settings.Secure.getUriFor(CrtScreenOffPolicy.SETTING_KEY))) {
+                // The observer runs on mHandler, the thread that owns the cache.
+                updateScreenOffAnimationSetting();
+                return;
+            }
             if (uri.equals(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE))) {
                 mHandler.postAtTime(() -> {
                     handleBrightnessModeChange();
