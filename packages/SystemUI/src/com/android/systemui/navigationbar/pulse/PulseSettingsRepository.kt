@@ -30,10 +30,10 @@ data class PulseConfig(
     val color: Int,
     val heightDp: Int,
     val alpha: Int = PulseSettingsRepository.DEFAULT_ALPHA,
+    val colorMode: PulseColorMode = PulseColorMode.SOLID,
 ) {
-    /** [color] with [alpha] in the top byte, ready for [android.graphics.Paint.setColor]. */
-    val argb: Int
-        get() = (alpha shl 24) or (color and 0xFFFFFF)
+    /** The bar color for the current theme, ready for [android.graphics.Paint.setColor]. */
+    fun argb(nightMode: Boolean): Int = colorMode.resolveArgb(color, alpha, nightMode)
 }
 
 /** Provides Pulse configuration for the current user. */
@@ -53,8 +53,11 @@ constructor(secureSettingsRepository: SecureSettingsRepository) {
                 secureSettingsRepository.intSetting(ALPHA_KEY, defaultValue = DEFAULT_ALPHA).map {
                     it.coerceIn(MIN_ALPHA, MAX_ALPHA)
                 },
-            ) { enabled, color, heightDp, alpha ->
-                PulseConfig(enabled, color, heightDp, alpha)
+                secureSettingsRepository
+                    .intSetting(COLOR_MODE_KEY, defaultValue = PulseColorMode.SOLID.value)
+                    .map { PulseColorMode.fromSetting(it) },
+            ) { enabled, color, heightDp, alpha, colorMode ->
+                PulseConfig(enabled, color, heightDp, alpha, colorMode)
             }
             .distinctUntilChanged()
 
@@ -63,6 +66,7 @@ constructor(secureSettingsRepository: SecureSettingsRepository) {
         const val COLOR_KEY = "lineage_pulse_color"
         const val HEIGHT_KEY = "lineage_pulse_height_dp"
         const val ALPHA_KEY = "lineage_pulse_alpha"
+        const val COLOR_MODE_KEY = "lineage_pulse_color_mode"
 
         /** About 85%: the fixed alpha Pulse used before the setting, so unset installs match. */
         const val DEFAULT_ALPHA = 0xD9
