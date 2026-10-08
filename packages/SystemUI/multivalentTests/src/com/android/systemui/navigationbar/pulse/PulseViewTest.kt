@@ -71,7 +71,7 @@ class PulseViewTest : SysuiTestCase() {
     fun draw_appliesDefaultBoostCurveToLevel() {
         val top = drawnTop(level = 0.05f)
 
-        assertThat(top).isWithin(1e-3f).of(100f * (1f - PulseHeightCurve().apply(0.05f)))
+        assertThat(top).isWithin(1e-3f).of(100f * (1f - PulseHeightCurve().heightFor(0.05f)))
         assertThat(top).isLessThan(95f)
     }
 

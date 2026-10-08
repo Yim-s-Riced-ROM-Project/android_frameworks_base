@@ -98,7 +98,7 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
 
         val bottom = height.toFloat()
         for (index in drawLevels.indices) {
-            val level = heightCurve.apply(drawLevels[index])
+            val level = heightCurve.heightFor(drawLevels[index])
             if (level <= 0f) continue
             canvas.drawRect(barLeft[index], bottom * (1f - level), barRight[index], bottom, paint)
         }

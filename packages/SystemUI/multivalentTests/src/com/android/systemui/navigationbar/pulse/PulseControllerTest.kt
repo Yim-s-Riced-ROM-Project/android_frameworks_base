@@ -914,7 +914,8 @@ class PulseControllerTest {
         StringWriter().also { underTest.dump(PrintWriter(it), emptyArray()) }.toString()
 
     private fun dumpValue(name: String): String =
-        Regex("(?m)^$name=(.*)$").find(dump())!!.groupValues[1]
+        Regex("(?m)^$name=(.*)$").find(dump())?.groupValues?.get(1)
+            ?: error("no $name in dump")
 
     private fun logMessages(): List<String> = loggedMessages.toList()
 

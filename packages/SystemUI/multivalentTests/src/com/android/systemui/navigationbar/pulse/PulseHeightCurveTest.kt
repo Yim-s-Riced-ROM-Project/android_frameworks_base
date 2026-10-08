@@ -33,7 +33,7 @@ class PulseHeightCurveTest {
         underTest.strength = 0
 
         for (level in LEVELS) {
-            assertThat(underTest.apply(level)).isEqualTo(level)
+            assertThat(underTest.heightFor(level)).isEqualTo(level)
         }
     }
 
@@ -42,8 +42,8 @@ class PulseHeightCurveTest {
         for (strength in listOf(0, 1, 20, 100)) {
             underTest.strength = strength
 
-            assertThat(underTest.apply(0f)).isEqualTo(0f)
-            assertThat(underTest.apply(1f)).isEqualTo(1f)
+            assertThat(underTest.heightFor(0f)).isEqualTo(0f)
+            assertThat(underTest.heightFor(1f)).isEqualTo(1f)
         }
     }
 
@@ -52,9 +52,9 @@ class PulseHeightCurveTest {
         underTest.strength = 20
 
         val expected = (ln(1.0 + 20 * 0.05) / ln(21.0)).toFloat()
-        assertThat(underTest.apply(0.05f)).isWithin(1e-6f).of(expected)
-        // A 5% band on the default 48 dp bar grows from 2.4 dp to about 10 dp.
-        assertThat(underTest.apply(0.05f) * 48f).isWithin(0.5f).of(10.9f)
+        assertThat(underTest.heightFor(0.05f)).isWithin(1e-6f).of(expected)
+        // A 5% band on the default 48 dp bar grows from 2.4 dp to about 11 dp.
+        assertThat(underTest.heightFor(0.05f) * 48f).isWithin(0.5f).of(10.9f)
     }
 
     @Test
@@ -63,7 +63,7 @@ class PulseHeightCurveTest {
         var previous = 0f
 
         for (level in LEVELS) {
-            val height = underTest.apply(level)
+            val height = underTest.heightFor(level)
             assertThat(height).isAtLeast(previous)
             assertThat(height).isAtLeast(level)
             previous = height
@@ -73,19 +73,19 @@ class PulseHeightCurveTest {
     @Test
     fun apply_strongerBoostRaisesQuietLevelsMore() {
         underTest.strength = 20
-        val moderate = underTest.apply(0.05f)
+        val moderate = underTest.heightFor(0.05f)
         underTest.strength = 100
 
-        assertThat(underTest.apply(0.05f)).isGreaterThan(moderate)
+        assertThat(underTest.heightFor(0.05f)).isGreaterThan(moderate)
     }
 
     @Test
     fun apply_clampsLevelsOutsideUnitRange() {
         underTest.strength = 20
 
-        assertThat(underTest.apply(-0.5f)).isEqualTo(0f)
-        assertThat(underTest.apply(1.5f)).isEqualTo(1f)
-        assertThat(underTest.apply(Float.NaN)).isEqualTo(0f)
+        assertThat(underTest.heightFor(-0.5f)).isEqualTo(0f)
+        assertThat(underTest.heightFor(1.5f)).isEqualTo(1f)
+        assertThat(underTest.heightFor(Float.NaN)).isEqualTo(0f)
     }
 
     @Test

@@ -22,11 +22,13 @@ import kotlin.math.ln1p
  * Maps a smoothed 0..1 bar level to a 0..1 bar height through `ln(1 + k·level) / ln(1 + k)`.
  *
  * Quiet levels grow a lot and loud levels a little; 0 and 1 stay fixed. A [strength] `k` of 0 is
- * linear. Changing [strength] precomputes `1 / ln(1 + k)`, so [apply] allocates nothing and costs
- * one `ln1p` per bar, which keeps it safe inside `onDraw`.
+ * linear. Changing [strength] precomputes `1 / ln(1 + k)`, so [heightFor] allocates nothing and
+ * costs one `ln1p` per bar, which keeps it safe inside `onDraw`.
+ *
+ * Not thread-safe: set [strength] and call [heightFor] on the owning view's thread.
  */
 class PulseHeightCurve {
-    private var inverseRange = inverseRange(DEFAULT_STRENGTH)
+    private var inverseRange = inverseLnRange(DEFAULT_STRENGTH)
 
     /** Curve strength `k`, clamped to [MIN_STRENGTH]..[MAX_STRENGTH]. */
     var strength: Int = DEFAULT_STRENGTH
@@ -34,11 +36,11 @@ class PulseHeightCurve {
             val clamped = value.coerceIn(MIN_STRENGTH, MAX_STRENGTH)
             if (clamped == field) return
             field = clamped
-            inverseRange = inverseRange(clamped)
+            inverseRange = inverseLnRange(clamped)
         }
 
     /** Returns the drawn height fraction for [level]; NaN and levels outside 0..1 are clamped. */
-    fun apply(level: Float): Float {
+    fun heightFor(level: Float): Float {
         if (!(level > 0f)) return 0f
         if (level >= 1f) return 1f
         if (strength == 0) return level
@@ -50,7 +52,7 @@ class PulseHeightCurve {
         const val MAX_STRENGTH = 100
         const val DEFAULT_STRENGTH = 20
 
-        private fun inverseRange(strength: Int): Float =
+        private fun inverseLnRange(strength: Int): Float =
             if (strength == 0) 0f else 1f / ln1p(strength.toFloat())
     }
 }
