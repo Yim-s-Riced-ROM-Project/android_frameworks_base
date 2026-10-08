@@ -124,6 +124,69 @@ class PulseViewTest : SysuiTestCase() {
         verify(canvas, never()).drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
     }
 
+    @Test
+    fun draw_defaultLayout_keepsLegacyBarEdges() {
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        val left = argumentCaptor<Float>()
+        val right = argumentCaptor<Float>()
+        view.layout(0, 0, 320, 100)
+        view.setLevels(floatArrayOf(1f))
+
+        view.draw(canvas)
+
+        verify(canvas).drawRect(left.capture(), anyFloat(), right.capture(), anyFloat(), any())
+        assertThat(left.firstValue).isWithin(1e-4f).of(1.5f)
+        assertThat(right.firstValue).isWithin(1e-4f).of(8.5f)
+    }
+
+    @Test
+    fun draw_moreBarsThanBands_drawsOneRectPerBar() {
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        view.layout(0, 0, 640, 100)
+        view.setBarLayout(count = 64, gapPercent = 30)
+        view.setLevels(FloatArray(32) { 1f })
+
+        view.draw(canvas)
+
+        verify(canvas, times(64)).drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
+    }
+
+    @Test
+    fun draw_fewerBarsThanBands_keepsBandPeak() {
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        val left = argumentCaptor<Float>()
+        view.layout(0, 0, 320, 100)
+        view.setBarLayout(count = 16, gapPercent = 0)
+        view.setLevels(FloatArray(32).also { it[1] = 1f })
+
+        view.draw(canvas)
+
+        verify(canvas).drawRect(left.capture(), anyFloat(), anyFloat(), anyFloat(), any())
+        assertThat(left.firstValue).isEqualTo(0f)
+    }
+
+    @Test
+    fun setBarLayout_afterSizing_recomputesEdgesAndReportsGap() {
+        val view = PulseView(mContext)
+        val canvas = mock(Canvas::class.java)
+        val right = argumentCaptor<Float>()
+        view.layout(0, 0, 320, 100)
+
+        view.setBarLayout(count = 16, gapPercent = 0)
+        view.setLevels(FloatArray(32).also { it[0] = 1f })
+        view.draw(canvas)
+
+        verify(canvas).drawRect(anyFloat(), anyFloat(), right.capture(), anyFloat(), any())
+        assertThat(right.firstValue).isWithin(1e-4f).of(20f)
+        assertThat(view.effectiveBarGapPx).isEqualTo(0f)
+
+        view.setBarLayout(count = 16, gapPercent = 50)
+        assertThat(view.effectiveBarGapPx).isWithin(1e-4f).of(10f)
+    }
+
     private fun drawnTop(level: Float, boost: Int? = null): Float {
         val view = PulseView(mContext)
         val canvas = mock(Canvas::class.java)

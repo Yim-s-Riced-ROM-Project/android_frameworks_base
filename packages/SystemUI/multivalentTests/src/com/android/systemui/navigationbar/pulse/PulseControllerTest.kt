@@ -448,6 +448,44 @@ class PulseControllerTest {
     }
 
     @Test
+    fun overlayShow_appliesConfiguredBarLayout() {
+        settings.value = settings.value.copy(barCount = 64, barGapPercent = 0)
+
+        showOverlay()
+
+        inOrder(windowController) {
+            verify(windowController).setBarLayout(64, 0)
+            verify(windowController).show(any())
+        }
+    }
+
+    @Test
+    fun barLayoutChange_updatesViewWithoutRestart() {
+        showOverlay()
+        val epochBefore = dumpValue("captureEpoch")
+
+        settings.value = settings.value.copy(barCount = 48, barGapPercent = 50)
+        runMain()
+
+        assertThat(dumpValue("captureEpoch")).isEqualTo(epochBefore)
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+        verify(windowController).setBarLayout(48, 50)
+        verify(windowController, never()).hide()
+        verify(windowController, times(1)).show(any())
+    }
+
+    @Test
+    fun barLayoutChange_logsTransition() {
+        val before = logMessages().size
+
+        settings.value = settings.value.copy(barCount = 48, barGapPercent = 50)
+        runMain()
+
+        assertThat(logMessages().drop(before)).contains("barLayout count=48 gap=50")
+    }
+
+    @Test
     fun boostChange_updatesCurveWithoutRestart() {
         showOverlay()
         val epochBefore = dumpValue("captureEpoch")
@@ -706,6 +744,19 @@ class PulseControllerTest {
         showOverlay()
 
         assertThat(dump()).contains("boost=100\n")
+    }
+
+    @Test
+    fun dump_reportsBarLayoutAndEffectiveGap() {
+        settings.value = settings.value.copy(barCount = 48, barGapPercent = 50)
+        whenever(windowController.effectiveBarGapPx).thenReturn(12.5f)
+        showOverlay()
+
+        val dump = dump()
+
+        assertThat(dump).contains("barCount=48\n")
+        assertThat(dump).contains("barGapPercent=50\n")
+        assertThat(dump).contains("barGapPx=12.5\n")
     }
 
     @Test
@@ -1084,6 +1135,9 @@ class PulseControllerTest {
                 "nightMode",
                 "effectiveColor",
                 "boost",
+                "barCount",
+                "barGapPercent",
+                "barGapPx",
             )
     }
 }

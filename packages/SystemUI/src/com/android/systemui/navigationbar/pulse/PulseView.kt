@@ -37,11 +37,18 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
             color = Color.WHITE
             style = Paint.Style.FILL
         }
-    private val levels = FloatArray(BAR_COUNT)
-    private val drawLevels = FloatArray(BAR_COUNT)
-    private val barLeft = FloatArray(BAR_COUNT)
-    private val barRight = FloatArray(BAR_COUNT)
+    private val levels = FloatArray(PulseSpectrumProcessor.BAND_COUNT)
+    private val drawBands = FloatArray(PulseSpectrumProcessor.BAND_COUNT)
+    // Per-bar buffers, main-thread only. Reallocated by setBarLayout when the count changes.
+    private var drawLevels = FloatArray(PulseSettingsRepository.DEFAULT_BAR_COUNT)
+    private var barLeft = FloatArray(PulseSettingsRepository.DEFAULT_BAR_COUNT)
+    private var barRight = FloatArray(PulseSettingsRepository.DEFAULT_BAR_COUNT)
+    private var barGapPercent = PulseSettingsRepository.DEFAULT_BAR_GAP_PERCENT
     private val heightCurve = PulseHeightCurve()
+
+    /** The gap between bars in pixels after [PulseBarGeometry]'s 1 px rule; 0 before sizing. */
+    var effectiveBarGapPx = 0f
+        private set
 
     init {
         isClickable = false
@@ -70,6 +77,22 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
         postInvalidateOnAnimation()
     }
 
+    /**
+     * Sets how many bars span the width and the percent of each bar's slot left empty. Called on
+     * the main thread on setting changes, never per frame; reallocates only when [count] changes.
+     */
+    fun setBarLayout(count: Int, gapPercent: Int) {
+        val barCount = count.coerceAtLeast(1)
+        if (barCount != drawLevels.size) {
+            drawLevels = FloatArray(barCount)
+            barLeft = FloatArray(barCount)
+            barRight = FloatArray(barCount)
+        }
+        barGapPercent = gapPercent
+        layoutBars(width)
+        postInvalidateOnAnimation()
+    }
+
     fun clear() {
         synchronized(levels) { levels.fill(0f) }
         postInvalidateOnAnimation()
@@ -82,19 +105,18 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        if (width <= 0) return
+        layoutBars(width)
+    }
 
-        val slotWidth = width.toFloat() / BAR_COUNT
-        val inset = slotWidth * BAR_INSET_RATIO
-        for (index in barLeft.indices) {
-            barLeft[index] = index * slotWidth + inset
-            barRight[index] = (index + 1) * slotWidth - inset
-        }
+    private fun layoutBars(width: Int) {
+        if (width <= 0) return
+        effectiveBarGapPx = PulseBarGeometry.layout(width, barGapPercent, barLeft, barRight)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        synchronized(levels) { levels.copyInto(drawLevels) }
+        synchronized(levels) { levels.copyInto(drawBands) }
+        PulseBarResampler.resample(drawBands, drawLevels)
 
         val bottom = height.toFloat()
         for (index in drawLevels.indices) {
@@ -102,10 +124,5 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
             if (level <= 0f) continue
             canvas.drawRect(barLeft[index], bottom * (1f - level), barRight[index], bottom, paint)
         }
-    }
-
-    private companion object {
-        const val BAR_COUNT = 32
-        const val BAR_INSET_RATIO = 0.15f
     }
 }
