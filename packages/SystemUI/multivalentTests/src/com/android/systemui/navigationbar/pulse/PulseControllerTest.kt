@@ -74,10 +74,12 @@ class PulseControllerTest {
     private val playback = MutableStateFlow(PulsePlaybackTarget(active = true, sessionId = SESSION))
     private val keyguardGone = MutableStateFlow(true)
     private val awake = MutableStateFlow(true)
+    private val nightMode = MutableStateFlow(false)
     private val hostState = PulseHostStateRepository()
     private val capture = FakePulseAudioCapture()
 
     private val settingsRepository = mock<PulseSettingsRepository>()
+    private val themeRepository = mock<PulseThemeRepository>()
     private val playbackRepository = mock<PulsePlaybackRepository>()
     private val windowController = mock<PulseWindowController>()
     private val keyguardTransitionInteractor = mock<KeyguardTransitionInteractor>()
@@ -94,6 +96,7 @@ class PulseControllerTest {
     @Before
     fun setUp() {
         whenever(settingsRepository.config).thenReturn(settings)
+        whenever(themeRepository.nightMode).thenReturn(nightMode)
         whenever(playbackRepository.target).thenReturn(playback)
         whenever(keyguardTransitionInteractor.isFinishedIn(Scenes.Gone, KeyguardState.GONE))
             .thenReturn(keyguardGone)
@@ -746,6 +749,131 @@ class PulseControllerTest {
         assertThat(logMessages()).hasSize(before)
     }
 
+    @Test
+    fun matchTheme_drawsBlackBarsWithLightTheme() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        nightMode.value = false
+
+        showOverlay()
+
+        verify(windowController).setColor(0xD9000000.toInt())
+    }
+
+    @Test
+    fun matchTheme_drawsWhiteBarsWithDarkTheme() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        nightMode.value = true
+
+        showOverlay()
+
+        verify(windowController).setColor(0xD9FFFFFF.toInt())
+    }
+
+    @Test
+    fun matchTheme_appliesConfiguredAlpha() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME, alpha = 0x40)
+        nightMode.value = true
+
+        showOverlay()
+
+        verify(windowController).setColor(0x40FFFFFF)
+    }
+
+    @Test
+    fun matchTheme_themeToggleRecolorsLiveWithoutRestartingCapture() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        showOverlay()
+        val epochBefore = dumpValue("captureEpoch")
+
+        nightMode.value = true
+        runMain()
+        nightMode.value = false
+        runMain()
+
+        inOrder(windowController) {
+            verify(windowController).setColor(0xD9000000.toInt())
+            verify(windowController).setColor(0xD9FFFFFF.toInt())
+            verify(windowController).setColor(0xD9000000.toInt())
+        }
+        assertThat(dumpValue("captureEpoch")).isEqualTo(epochBefore)
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+        verify(windowController, never()).hide()
+        verify(windowController, times(1)).show(any())
+    }
+
+    @Test
+    fun solid_themeToggleDoesNotRecolor() {
+        showOverlay()
+
+        nightMode.value = true
+        runMain()
+
+        verify(windowController, times(1)).setColor(any())
+    }
+
+    @Test
+    fun colorModeChange_recolorsWithoutRestart() {
+        nightMode.value = true
+        showOverlay()
+
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        runMain()
+
+        verify(windowController).setColor(0xD9FFFFFF.toInt())
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+    }
+
+    @Test
+    fun themeToggleWhileHidden_appliesOnNextShow() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+
+        nightMode.value = true
+        runMain()
+        verify(windowController, never()).setColor(any())
+
+        playback.value = PulsePlaybackTarget(active = true, sessionId = SESSION)
+        runMain()
+        makeReady()
+
+        verify(windowController).setColor(0xD9FFFFFF.toInt())
+    }
+
+    @Test
+    fun dump_reportsColorModeNightModeAndEffectiveColor() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        nightMode.value = true
+        showOverlay()
+
+        val dump = dump()
+
+        assertThat(dump).contains("colorMode=MATCH_THEME\n")
+        assertThat(dump).contains("nightMode=true\n")
+        assertThat(dump).contains("effectiveColor=#D9FFFFFF\n")
+    }
+
+    @Test
+    fun logBuffer_recordsThemeAndColorModeTransitionsOnce() {
+        showOverlay()
+        val before = logMessages().size
+
+        settings.value = settings.value.copy(colorMode = PulseColorMode.MATCH_THEME)
+        runMain()
+        nightMode.value = true
+        runMain()
+        repeat(5) { emitFrame(validFft()) }
+
+        val added = logMessages().drop(before)
+        assertThat(added).containsExactly("colorMode=MATCH_THEME", "nightMode=true").inOrder()
+    }
+
+    private fun dumpValue(name: String): String =
+        dump().lineSequence().first { it.startsWith("$name=") }.substringAfter('=')
+
     private fun dump(): String =
         StringWriter().also { underTest.dump(PrintWriter(it), emptyArray()) }.toString()
 
@@ -754,6 +882,7 @@ class PulseControllerTest {
     private fun createController(displayId: Int) =
         PulseController(
             settingsRepository,
+            themeRepository,
             playbackRepository,
             hostState,
             capture,
@@ -911,6 +1040,9 @@ class PulseControllerTest {
                 "overlayShown",
                 "windowAttached",
                 "alpha",
+                "colorMode",
+                "nightMode",
+                "effectiveColor",
             )
     }
 }

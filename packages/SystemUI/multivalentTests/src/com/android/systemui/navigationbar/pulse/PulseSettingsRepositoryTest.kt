@@ -115,7 +115,43 @@ class PulseSettingsRepositoryTest : SysuiTestCase() {
     fun config_composesArgbFromAlphaAndRgb() {
         val config = PulseConfig(enabled = true, color = 0x123456, heightDp = 48, alpha = 0x80)
 
-        assertThat(config.argb).isEqualTo(0x80123456.toInt())
+        assertThat(config.argb(nightMode = false)).isEqualTo(0x80123456.toInt())
+        assertThat(config.argb(nightMode = true)).isEqualTo(0x80123456.toInt())
+    }
+
+    @Test
+    fun config_matchThemeArgbFollowsNightMode() {
+        val config =
+            PulseConfig(
+                enabled = true,
+                color = 0x123456,
+                heightDp = 48,
+                alpha = 0x80,
+                colorMode = PulseColorMode.MATCH_THEME,
+            )
+
+        assertThat(config.argb(nightMode = true)).isEqualTo(0x80FFFFFF.toInt())
+        assertThat(config.argb(nightMode = false)).isEqualTo(0x80000000.toInt())
+    }
+
+    @Test
+    fun config_colorModeDefaultsToSolid() = runTest {
+        assertThat(underTest.config.first().colorMode).isEqualTo(PulseColorMode.SOLID)
+    }
+
+    @Test
+    fun config_readsMatchThemeColorMode() = runTest {
+        secureSettingsRepository.setInt(PulseSettingsRepository.COLOR_MODE_KEY, 1)
+
+        assertThat(underTest.config.first().colorMode).isEqualTo(PulseColorMode.MATCH_THEME)
+    }
+
+    @Test
+    fun config_readsUnknownColorModeAsSolid() = runTest {
+        for (raw in listOf(-1, 2, 99)) {
+            secureSettingsRepository.setInt(PulseSettingsRepository.COLOR_MODE_KEY, raw)
+            assertThat(underTest.config.first().colorMode).isEqualTo(PulseColorMode.SOLID)
+        }
     }
 
     @Test

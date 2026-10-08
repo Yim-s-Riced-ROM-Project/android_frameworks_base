@@ -69,6 +69,7 @@ class PulseController
 @Inject
 constructor(
     private val settingsRepository: PulseSettingsRepository,
+    private val themeRepository: PulseThemeRepository,
     private val playbackRepository: PulsePlaybackRepository,
     @param:DisplayAware private val hostStateRepository: PulseHostStateRepository,
     @param:DisplayAware private val audioCapture: PulseAudioCapture,
@@ -93,6 +94,8 @@ constructor(
 
     // Eligibility inputs (main thread). Unknown inputs start in their fail-closed state.
     private var config = PulseConfig(enabled = false, color = DEFAULT_COLOR, heightDp = 48)
+    // Appearance only, never an eligibility input: a theme change recolors without a restart.
+    private var nightMode = false
     private var hostState = PulseHostState()
     private var playbackTarget = PulsePlaybackTarget.INACTIVE
     private var keyguardGone = false
@@ -164,6 +167,7 @@ constructor(
                         recompute()
                     }
                 }
+                launch { themeRepository.nightMode.collectLatest { onNightModeChanged(it) } }
                 launch {
                     playbackRepository.target.collectLatest {
                         playbackTarget = it
@@ -245,11 +249,29 @@ constructor(
     private fun onConfigChanged(next: PulseConfig) {
         val previous = config
         config = next
+        if (next.colorMode != previous.colorMode) {
+            logBuffer.log(
+                TAG,
+                LogLevel.DEBUG,
+                { str1 = next.colorMode.name },
+                { "colorMode=$str1" },
+            )
+        }
         if (!overlayShown) return
-        if (next.argb != previous.argb) windowController.setColor(next.argb)
+        val argb = next.argb(nightMode)
+        if (argb != previous.argb(nightMode)) windowController.setColor(argb)
         if (next.heightDp != previous.heightDp && !windowController.updateHeight(next.heightDp)) {
             failEpoch(captureEpoch.get(), "window update")
         }
+    }
+
+    private fun onNightModeChanged(next: Boolean) {
+        if (next == nightMode) return
+        val previousArgb = config.argb(nightMode)
+        nightMode = next
+        logBuffer.log(TAG, LogLevel.DEBUG, { bool1 = next }, { "nightMode=$bool1" })
+        val argb = config.argb(nightMode)
+        if (overlayShown && argb != previousArgb) windowController.setColor(argb)
     }
 
     private fun currentInputs() =
@@ -335,6 +357,9 @@ constructor(
         pw.println("overlayShown=$overlayShown")
         pw.println("windowAttached=${windowController.isAttached}")
         pw.println("alpha=${config.alpha}")
+        pw.println("colorMode=${config.colorMode}")
+        pw.println("nightMode=$nightMode")
+        pw.println("effectiveColor=#%08X".format(config.argb(nightMode)))
     }
 
     private fun startRuntime(sessionId: Int?) {
@@ -418,7 +443,7 @@ constructor(
     }
 
     private fun showOverlay(epoch: Int, levels: FloatArray) {
-        windowController.setColor(config.argb)
+        windowController.setColor(config.argb(nightMode))
         windowController.setLevels(levels)
         if (!windowController.show(config.heightDp)) {
             failEpoch(epoch, "window add")
