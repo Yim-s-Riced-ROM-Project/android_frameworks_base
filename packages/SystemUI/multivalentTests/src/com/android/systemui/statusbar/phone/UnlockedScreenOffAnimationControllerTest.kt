@@ -19,7 +19,6 @@ package com.android.systemui.statusbar.phone
 import android.animation.ValueAnimator
 import android.os.Handler
 import android.os.PowerManager
-import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.RequiresFlagsEnabled
 import android.provider.Settings
 import android.testing.TestableLooper.RunWithLooper
@@ -41,9 +40,6 @@ import com.android.systemui.keyguard.WakefulnessLifecycle
 import com.android.systemui.shade.ShadeViewController
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor
 import com.android.systemui.shade.domain.interactor.ShadeLockscreenInteractor
-import com.android.systemui.shared.Flags as SharedFlags
-import com.android.systemui.statusbar.CircleReveal
-import com.android.systemui.statusbar.CrtCollapseReveal
 import com.android.systemui.statusbar.LiftReveal
 import com.android.systemui.statusbar.LightRevealEffect
 import com.android.systemui.statusbar.LightRevealScrim
@@ -62,10 +58,8 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.Mock
 import org.mockito.Mockito.any
-import org.mockito.Mockito.anyBoolean
 import org.mockito.Mockito.anyFloat
 import org.mockito.Mockito.anyLong
-import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
@@ -267,33 +261,10 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun acceptedNormalStart_invokesCoordinatorOnceBeforeAnimatorCallback() {
-        givenAcceptedState()
-        DejankUtils.setImmediate(true)
-
-        controller.startAnimation()
-
-        val order = inOrder(crtCoordinator, lightRevealScrim)
-        order.verify(crtCoordinator).start(true)
-        order.verify(lightRevealScrim).revealEffect = revealEffect
-        verify(crtCoordinator, times(1)).start(anyBoolean())
-    }
-
-    @Test
-    fun acceptedMinMode_startsCoordinatorWithNormalModeFalse() {
-        givenAcceptedState(minMode = true)
-
-        controller.startAnimation()
-
-        verify(crtCoordinator).start(false)
-        assertThat(lightRevealAnimator().duration).isEqualTo(100L)
-    }
-
-    @Test
-    fun rejectedStart_reportsTypedDecisionAndNeverStartsCoordinator() {
+    fun rejectedStart_reportsTypedDecision() {
         `when`(dozeParameters.canControlUnlockedScreenOff()).thenReturn(false)
 
-        controller.startAnimation()
+        assertFalse(controller.startAnimation())
 
         verify(crtCoordinator)
             .onStockDecision(
@@ -301,48 +272,46 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
                     ScreenOffAnimationBlockedReason.CANNOT_CONTROL_UNLOCKED_SCREEN_OFF
                 )
             )
-        verify(crtCoordinator, never()).start(anyBoolean())
-    }
-
-    @DisableFlags(SharedFlags.FLAG_AMBIENT_AOD)
-    @Test
-    fun wake_cancelsCoordinatorBeforeRestoringFullReveal() {
-        givenAcceptedState()
-        DejankUtils.setImmediate(true)
-        controller.startAnimation()
-
-        controller.onStartedWakingUp()
-
-        val order = inOrder(crtCoordinator, lightRevealScrim)
-        order.verify(crtCoordinator).cancel(CrtCancellationReason.WAKE)
-        order.verify(lightRevealScrim).revealAmount = 1f
     }
 
     @Test
-    fun naturalEnd_completesCoordinator() {
+    fun crtSelected_blocksWithCrtOwnedByDisplay() {
         givenAcceptedState()
-        DejankUtils.setImmediate(true)
-        controller.startAnimation()
+        `when`(crtCoordinator.isCrtOwnedByDisplay()).thenReturn(true)
 
-        lightRevealAnimator().end()
+        assertFalse(controller.shouldPlayUnlockedScreenOffAnimation())
 
-        verify(crtCoordinator).complete()
-        verify(crtCoordinator, never()).cancel(CrtCancellationReason.ANIMATOR_CANCELLED)
+        verify(crtCoordinator)
+            .onStockDecision(
+                ScreenOffAnimationDecision.blocked(
+                    ScreenOffAnimationBlockedReason.CRT_OWNED_BY_DISPLAY
+                )
+            )
     }
 
     @Test
-    fun animatorCancel_cancelsBeforeTrailingComplete() {
-        givenAcceptedState()
-        DejankUtils.setImmediate(true)
+    fun crtSelected_reportsCrtOwnershipBeforePreviousRejection() {
+        // The lockscreen path used to stick on PREVIOUSLY_REJECTED; CRT ownership wins first.
+        `when`(dozeParameters.canControlUnlockedScreenOff()).thenReturn(false)
         controller.startAnimation()
+        `when`(crtCoordinator.isCrtOwnedByDisplay()).thenReturn(true)
 
-        lightRevealAnimator().cancel()
+        controller.shouldPlayUnlockedScreenOffAnimation()
 
-        // The cancellation ends the transition first, so the trailing onAnimationEnd completion
-        // is a coordinator no-op (see CrtScreenOffAnimationCoordinatorTest idempotence).
-        val order = inOrder(crtCoordinator)
-        order.verify(crtCoordinator).cancel(CrtCancellationReason.ANIMATOR_CANCELLED)
-        order.verify(crtCoordinator).complete()
+        verify(crtCoordinator)
+            .onStockDecision(
+                ScreenOffAnimationDecision.blocked(
+                    ScreenOffAnimationBlockedReason.CRT_OWNED_BY_DISPLAY
+                )
+            )
+    }
+
+    @Test
+    fun stockSelected_keepsStockGates() {
+        givenAcceptedState()
+        `when`(crtCoordinator.isCrtOwnedByDisplay()).thenReturn(false)
+
+        assertThat(controller.shouldPlayUnlockedScreenOffAnimation()).isTrue()
     }
 
     @Test
@@ -392,20 +361,6 @@ class UnlockedScreenOffAnimationControllerTest : SysuiTestCase() {
             .begin(any(InteractionJankMonitor.Configuration.Builder::class.java))
         verify(interactionJankMonitor).end(CUJ_SCREEN_OFF_SHOW_AOD)
         assertThat(afterRan).isTrue()
-    }
-
-    @DisableFlags(SharedFlags.FLAG_AMBIENT_AOD)
-    @Test
-    fun circleBaseEffect_doesNotSuppressCrtOverrideUpdates() {
-        `when`(lightRevealScrim.revealEffect).thenReturn(CircleReveal(0, 0, 0, 1))
-        `when`(lightRevealScrim.activeRevealEffect).thenReturn(CrtCollapseReveal)
-        givenAcceptedState()
-        DejankUtils.setImmediate(true)
-        controller.startAnimation()
-
-        lightRevealAnimator().setCurrentFraction(0.5f)
-
-        verify(lightRevealScrim).revealAmount = 0.5f
     }
 
     /** Stubs every stock gate open, with a real 1x animator duration scale. */

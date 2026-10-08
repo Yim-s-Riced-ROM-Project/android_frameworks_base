@@ -106,7 +106,7 @@ constructor(
             interpolator = Interpolators.LINEAR
             addUpdateListener {
                 if (ambientAod()) return@addUpdateListener
-                if (lightRevealScrim.activeRevealEffect !is CircleReveal) {
+                if (lightRevealScrim.revealEffect !is CircleReveal) {
                     lightRevealScrim.revealAmount = it.animatedValue as Float
                 }
                 if (
@@ -121,11 +121,8 @@ constructor(
             addListener(
                 object : AnimatorListenerAdapter() {
                     override fun onAnimationCancel(animation: Animator) {
-                        crtScreenOffAnimationCoordinator.cancel(
-                            CrtCancellationReason.ANIMATOR_CANCELLED
-                        )
                         if (ambientAod()) return
-                        if (lightRevealScrim.activeRevealEffect !is CircleReveal) {
+                        if (lightRevealScrim.revealEffect !is CircleReveal) {
                             lightRevealScrim.revealAmount = 1f
                         }
                     }
@@ -133,8 +130,6 @@ constructor(
                     override fun onAnimationEnd(animation: Animator) {
                         lightRevealAnimationPlaying = false
                         interactionJankMonitor.end(CUJ_SCREEN_OFF)
-                        // No-op after a cancellation, which already ended the transition.
-                        crtScreenOffAnimationCoordinator.complete()
                     }
 
                     override fun onAnimationStart(animation: Animator) {
@@ -173,7 +168,7 @@ constructor(
     ) {
         this.initialized = true
         this.lightRevealScrim = lightRevealScrim
-        crtScreenOffAnimationCoordinator.initialize(lightRevealScrim)
+        crtScreenOffAnimationCoordinator.initialize()
         this.revealEffect = lightRevealScrim.revealEffect
         this.centralSurfaces = centralSurfaces
 
@@ -275,8 +270,6 @@ constructor(
 
         shouldAnimateInKeyguard = false
         DejankUtils.removeCallbacks(startLightRevealCallback)
-        // Expose the latest base wake/biometric effect before the reveal is restored.
-        crtScreenOffAnimationCoordinator.cancel(CrtCancellationReason.WAKE)
         lightRevealAnimator.cancel()
         handler.removeCallbacksAndMessages(null)
     }
@@ -306,8 +299,6 @@ constructor(
             } else {
                 lightRevealAnimator.setDuration(LIGHT_REVEAL_ANIMATION_DURATION_MINMODE)
             }
-            // Install any CRT override before the reveal's first frame. Min mode stays Stock.
-            crtScreenOffAnimationCoordinator.start(normalMode = shouldAnimateInKeyguard)
 
             // Start the animation on the next frame. startAnimation() is called after
             // PhoneWindowManager makes a binder call to System UI on
@@ -358,6 +349,9 @@ constructor(
             // If we haven't been initialized yet, we don't have a StatusBar/LightRevealScrim yet,
             // so we can't perform the animation.
             !initialized -> blocked(ScreenOffAnimationBlockedReason.NOT_INITIALIZED)
+            // With CRT selected, DisplayPowerController animates every screen-off itself.
+            crtScreenOffAnimationCoordinator.isCrtOwnedByDisplay() ->
+                blocked(ScreenOffAnimationBlockedReason.CRT_OWNED_BY_DISPLAY)
             // If the device isn't in a state where we can control unlocked screen off (no AOD
             // enabled, power save, etc.) then we shouldn't try to do so.
             !dozeParameters.get().canControlUnlockedScreenOff() ->

@@ -319,7 +319,7 @@ constructor(
                 if (value <= 0.0f || value >= 1.0f) {
                     scrimLogger?.d(TAG, "revealAmount", "$value on $logString")
                 }
-                activeRevealEffect.setRevealAmountOnScrim(value, this)
+                revealEffect.setRevealAmountOnScrim(value, this)
                 updateScrimOpaque()
                 TrackTracer.instantForGroup(
                     "scrim",
@@ -330,86 +330,20 @@ constructor(
             }
         }
 
-    private var baseRevealEffect: LightRevealEffect = LiftReveal
-
     /**
-     * The base [LightRevealEffect] used to manipulate the scrim whenever [revealAmount] changes.
-     *
-     * While [screenOffRevealEffectOverride] is set, updates are retained here without being drawn
-     * so that clearing the override exposes the latest base effect.
+     * The [LightRevealEffect] used to manipulate the radial gradient whenever [revealAmount]
+     * changes.
      */
-    var revealEffect: LightRevealEffect
-        get() = baseRevealEffect
+    var revealEffect: LightRevealEffect = LiftReveal
         set(value) {
-            if (baseRevealEffect != value) {
-                baseRevealEffect = value
-                if (screenOffRevealEffectOverride == null) {
-                    applyActiveRevealEffect()
-                }
+            if (field != value) {
+                field = value
+
+                revealEffect.setRevealAmountOnScrim(revealAmount, this)
                 scrimLogger?.d(TAG, "revealEffect", "$value on $logString")
+                invalidate()
             }
         }
-
-    /** [interpolatedRevealAmount] owned by the base effect while an override is installed. */
-    private var baseInterpolatedRevealAmount = 1f
-
-    /**
-     * Temporary effect owned by the unlocked screen-off animation. While set, it is drawn instead
-     * of [revealEffect]; clearing it reapplies the latest base effect at the current amount.
-     */
-    var screenOffRevealEffectOverride: LightRevealEffect? = null
-        set(value) {
-            if (field == value) return
-            if (field == null) {
-                baseInterpolatedRevealAmount = interpolatedRevealAmount
-            } else if (value == null) {
-                interpolatedRevealAmount = baseInterpolatedRevealAmount
-            }
-            field = value
-            applyActiveRevealEffect()
-            scrimLogger?.d(TAG, "screenOffRevealEffectOverride", "$value on $logString")
-        }
-
-    /** The effect currently driving the scrim: the screen-off override, else the base effect. */
-    val activeRevealEffect: LightRevealEffect
-        get() = screenOffRevealEffectOverride ?: baseRevealEffect
-
-    /** Display density, cached once so [CrtCollapseReveal] reads a primitive per frame. */
-    internal val crtDensity: Float = context?.resources?.displayMetrics?.density ?: 1f
-
-    /** CRT aperture and beam state written by [CrtCollapseReveal]; zero for every other effect. */
-    var crtApertureLeft = 0f
-        private set
-
-    var crtApertureTop = 0f
-        private set
-
-    var crtApertureRight = 0f
-        private set
-
-    var crtApertureBottom = 0f
-        private set
-
-    var crtBeamHalfHeight = 0f
-        private set
-
-    var crtGlowHalfHeight = 0f
-        private set
-
-    var crtFringeOffset = 0f
-        private set
-
-    var crtCoreAlpha = 0f
-        private set
-
-    var crtTrailAlpha = 0f
-        private set
-
-    var crtRedFringeAlpha = 0f
-        private set
-
-    var crtBlueFringeAlpha = 0f
-        private set
 
     var revealGradientCenter = PointF()
     var revealGradientWidth: Float = 0f
@@ -449,8 +383,6 @@ constructor(
             if (field != value) {
                 field = value
                 setPaintColorFilter()
-                // CRT masks use the same end color, so the last CRT frame matches revealAmount 0.
-                crtMaskPaint.color = value
             }
         }
 
@@ -524,13 +456,6 @@ constructor(
      */
     private val shaderGradientMatrix = Matrix()
 
-    /** Paints for the CRT screen-off effect, preallocated so [onDraw] never allocates. */
-    private val crtMaskPaint = Paint().apply { color = revealGradientEndColor }
-    private val crtCorePaint = Paint().apply { color = Color.WHITE }
-    private val crtTrailPaint = Paint().apply { color = Color.WHITE }
-    private val crtRedFringePaint = Paint().apply { color = Color.RED }
-    private val crtBlueFringePaint = Paint().apply { color = Color.BLUE }
-
     init {
         revealEffect.setRevealAmountOnScrim(revealAmount, this)
         setPaintColorFilter()
@@ -559,64 +484,8 @@ constructor(
         revealGradientCenter.y = top + (revealGradientHeight / 2f)
     }
 
-    /**
-     * Sets the CRT aperture and beam state. Only [CrtCollapseReveal] calls this. Like
-     * [setRevealGradientBounds], this does not call [invalidate].
-     *
-     * The 11 primitive parameters are a deliberate exception to the 7-parameter limit: this runs on
-     * every animation frame, and passing primitives instead of a state object (or a reused mutable
-     * holder) keeps the frame path allocation-free and the scrim the single owner of CRT state.
-     */
-    internal fun setCrtRevealState(
-        left: Float,
-        top: Float,
-        right: Float,
-        bottom: Float,
-        beamHalfHeight: Float,
-        glowHalfHeight: Float,
-        fringeOffset: Float,
-        coreAlpha: Float,
-        trailAlpha: Float,
-        redFringeAlpha: Float,
-        blueFringeAlpha: Float,
-    ) {
-        crtApertureLeft = left
-        crtApertureTop = top
-        crtApertureRight = right
-        crtApertureBottom = bottom
-        crtBeamHalfHeight = beamHalfHeight
-        crtGlowHalfHeight = glowHalfHeight
-        crtFringeOffset = fringeOffset
-        crtCoreAlpha = coreAlpha
-        crtTrailAlpha = trailAlpha
-        crtRedFringeAlpha = redFringeAlpha
-        crtBlueFringeAlpha = blueFringeAlpha
-    }
-
-    private fun resetCrtRevealState() {
-        setCrtRevealState(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
-    }
-
-    /** Resets effect-specific CRT state, then applies [activeRevealEffect] at [revealAmount]. */
-    private fun applyActiveRevealEffect() {
-        resetCrtRevealState()
-        activeRevealEffect.setRevealAmountOnScrim(revealAmount, this)
-        invalidate()
-    }
-
     override fun onDraw(canvas: Canvas) {
-        if (revealAmount == 0f) {
-            // Exact opaque end color, regardless of the active effect.
-            canvas.drawColor(revealGradientEndColor)
-            return
-        }
-
-        if (activeRevealEffect === CrtCollapseReveal) {
-            drawCrtReveal(canvas)
-            return
-        }
-
-        if (revealGradientWidth <= 0 || revealGradientHeight <= 0) {
+        if (revealGradientWidth <= 0 || revealGradientHeight <= 0 || revealAmount == 0f) {
             if (revealAmount < 1f) {
                 canvas.drawColor(revealGradientEndColor)
             }
@@ -636,68 +505,6 @@ constructor(
 
         // Draw the gradient over the screen, then multiply the end color by it.
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), gradientPaint)
-    }
-
-    /**
-     * Draws [revealGradientEndColor] masks outside the CRT aperture, then the beam. Uses primitive
-     * rects and preallocated paints only: no allocation or logging per frame.
-     */
-    private fun drawCrtReveal(canvas: Canvas) {
-        if (revealAmount >= 1f) return
-
-        val right = width.toFloat()
-        val bottom = height.toFloat()
-        canvas.drawRect(0f, 0f, right, crtApertureTop, crtMaskPaint)
-        canvas.drawRect(0f, crtApertureBottom, right, bottom, crtMaskPaint)
-        if (crtApertureLeft > 0f) {
-            canvas.drawRect(0f, crtApertureTop, crtApertureLeft, crtApertureBottom, crtMaskPaint)
-        }
-        if (crtApertureRight < right) {
-            canvas.drawRect(
-                crtApertureRight,
-                crtApertureTop,
-                right,
-                crtApertureBottom,
-                crtMaskPaint,
-            )
-        }
-        if (crtCoreAlpha > 0f) {
-            drawCrtBeam(canvas)
-        }
-    }
-
-    /** Phosphor trail, red fringe above, blue fringe below, then the white core on top. */
-    private fun drawCrtBeam(canvas: Canvas) {
-        val centerY = (crtApertureTop + crtApertureBottom) / 2f
-        val coreTop = centerY - crtBeamHalfHeight
-        val coreBottom = centerY + crtBeamHalfHeight
-        crtTrailPaint.color = getColorWithAlpha(Color.WHITE, crtTrailAlpha)
-        crtRedFringePaint.color = getColorWithAlpha(Color.RED, crtRedFringeAlpha)
-        crtBlueFringePaint.color = getColorWithAlpha(Color.BLUE, crtBlueFringeAlpha)
-        crtCorePaint.color = getColorWithAlpha(Color.WHITE, crtCoreAlpha)
-
-        canvas.drawRect(
-            crtApertureLeft,
-            centerY - crtGlowHalfHeight,
-            crtApertureRight,
-            centerY + crtGlowHalfHeight,
-            crtTrailPaint,
-        )
-        canvas.drawRect(
-            crtApertureLeft,
-            coreTop - crtFringeOffset,
-            crtApertureRight,
-            coreTop,
-            crtRedFringePaint,
-        )
-        canvas.drawRect(
-            crtApertureLeft,
-            coreBottom,
-            crtApertureRight,
-            coreBottom + crtFringeOffset,
-            crtBlueFringePaint,
-        )
-        canvas.drawRect(crtApertureLeft, coreTop, crtApertureRight, coreBottom, crtCorePaint)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {

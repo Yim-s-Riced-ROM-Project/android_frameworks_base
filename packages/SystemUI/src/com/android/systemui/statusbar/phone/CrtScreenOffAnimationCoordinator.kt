@@ -23,14 +23,13 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.LogLevel
 import com.android.systemui.log.dagger.CrtScreenOffAnimationLog
-import com.android.systemui.statusbar.CrtCollapseReveal
-import com.android.systemui.statusbar.LightRevealScrim
 import java.io.PrintWriter
 import javax.inject.Inject
 
 /** First stock gate that rejected the unlocked screen-off animation, in evaluation order. */
 enum class ScreenOffAnimationBlockedReason {
     NOT_INITIALIZED,
+    CRT_OWNED_BY_DISPLAY,
     CANNOT_CONTROL_UNLOCKED_SCREEN_OFF,
     PREVIOUSLY_REJECTED,
     ANIMATIONS_DISABLED,
@@ -66,21 +65,12 @@ data class ScreenOffAnimationDecision(
     }
 }
 
-/** Why an accepted screen-off transition stopped before completing. */
-enum class CrtCancellationReason {
-    WAKE,
-    ANIMATOR_CANCELLED,
-}
-
 /**
- * Owns the CRT screen-off selection and the temporary [LightRevealScrim] override. The stock
- * [UnlockedScreenOffAnimationController] keeps eligibility, timing, AOD, and wake handling, and
- * calls [start], [complete], and [cancel] at its accepted lifecycle boundaries.
- *
- * The setting is sampled once per accepted transition. Every completion, cancellation, and failure
- * clears the override; repeated calls are no-ops. Unexpected [RuntimeException]s fall back to Stock
- * and never escape onto the animation or wake path. Dump and logs hold only booleans, enums, stage
- * names, exception class names, and counters. All calls except [dump] happen on the main thread.
+ * Records SystemUI's unlocked screen-off decision for the CRT setting. With CRT selected,
+ * DisplayPowerController plays the CRT animation for every default-display screen-off, so
+ * [UnlockedScreenOffAnimationController] stands down with
+ * [ScreenOffAnimationBlockedReason.CRT_OWNED_BY_DISPLAY] and SystemUI behaves as stock without an
+ * animation. Dump and logs hold only booleans, enums, and the setting integer.
  */
 @SysUISingleton
 class CrtScreenOffAnimationCoordinator
@@ -90,42 +80,12 @@ constructor(
     private val dumpManager: DumpManager,
     @param:CrtScreenOffAnimationLog private val logBuffer: LogBuffer,
 ) : Dumpable {
-    private enum class SelectedEffect {
-        STOCK,
-        CRT,
-    }
-
-    private enum class AnimationState {
-        IDLE,
-        RUNNING,
-    }
-
-    private enum class EndReason {
-        NONE,
-        COMPLETED,
-        WAKE,
-        ANIMATOR_CANCELLED,
-    }
-
-    private var scrim: LightRevealScrim? = null
     private var dumpableRegistered = false
     private var lastDecision =
         ScreenOffAnimationDecision.blocked(ScreenOffAnimationBlockedReason.NOT_INITIALIZED)
-    private var selectedEffect = SelectedEffect.STOCK
-    private var minMode = false
-    private var overrideActive = false
-    private var animationState = AnimationState.IDLE
-    private var lastEndReason = EndReason.NONE
-    private var starts = 0
-    private var completions = 0
-    private var cancellations = 0
 
-    /** Stores the runtime scrim and registers the dumpable once. */
-    fun initialize(scrim: LightRevealScrim) {
-        if (this.scrim !== scrim && overrideActive) {
-            runGuarded(STAGE_CLEAR) { clearOverride() }
-        }
-        this.scrim = scrim
+    /** Registers the dumpable once. */
+    fun initialize() {
         if (dumpableRegistered) return
         try {
             dumpManager.registerNormalDumpable(TAG, this)
@@ -134,6 +94,10 @@ constructor(
             Log.w(TAG, "Dumpable already registered")
         }
     }
+
+    /** Whether CRT is selected, in which case DisplayPowerController owns every screen-off. */
+    fun isCrtOwnedByDisplay(): Boolean =
+        settingsRepository.setting.value.selection == ScreenOffAnimationSelection.CRT
 
     /** Records the latest stock eligibility decision; logs only when it changes. */
     fun onStockDecision(decision: ScreenOffAnimationDecision) {
@@ -150,137 +114,15 @@ constructor(
         )
     }
 
-    /**
-     * Starts an accepted screen-off transition: samples the setting once and installs the CRT
-     * override synchronously when selected. [normalMode] is false in min mode, which forces Stock.
-     */
-    fun start(normalMode: Boolean) {
-        if (animationState == AnimationState.RUNNING) return
-        animationState = AnimationState.RUNNING
-        starts++
-        minMode = !normalMode
-        selectedEffect = SelectedEffect.STOCK
-        val effect = runGuarded(STAGE_SAMPLE) { sampleSelection(normalMode) } ?: return
-        if (effect == SelectedEffect.CRT) {
-            runGuarded(STAGE_INSTALL) { installOverride() }
-        }
-    }
-
-    /** Completes the running transition at black and clears the override. */
-    fun complete() = endTransition(EndReason.COMPLETED)
-
-    /** Cancels the running transition and clears the override immediately. */
-    fun cancel(reason: CrtCancellationReason) =
-        endTransition(
-            when (reason) {
-                CrtCancellationReason.WAKE -> EndReason.WAKE
-                CrtCancellationReason.ANIMATOR_CANCELLED -> EndReason.ANIMATOR_CANCELLED
-            }
-        )
-
     override fun dump(pw: PrintWriter, args: Array<out String>) {
         pw.println("settingValue=${settingsRepository.setting.value.rawValue}")
-        pw.println("selectedEffect=$selectedEffect")
+        pw.println("crtOwnedByDisplay=${isCrtOwnedByDisplay()}")
         pw.println("stockEligible=${lastDecision.eligible}")
         pw.println("blockedBy=${lastDecision.blockedBy?.name ?: NONE}")
-        pw.println("minMode=$minMode")
-        pw.println("overrideActive=$overrideActive")
-        pw.println("animationState=$animationState")
-        pw.println("lastEndReason=$lastEndReason")
-        pw.println("starts=$starts")
-        pw.println("completions=$completions")
-        pw.println("cancellations=$cancellations")
-    }
-
-    private fun sampleSelection(normalMode: Boolean): SelectedEffect {
-        val sampled = settingsRepository.setting.value
-        val effect =
-            if (normalMode && sampled.selection == ScreenOffAnimationSelection.CRT) {
-                SelectedEffect.CRT
-            } else {
-                SelectedEffect.STOCK
-            }
-        selectedEffect = effect
-        logBuffer.log(
-            TAG,
-            LogLevel.DEBUG,
-            {
-                int1 = sampled.rawValue
-                bool1 = normalMode
-                str1 = effect.name
-            },
-            { "transition started setting=$int1 normalMode=$bool1 selected=$str1" },
-        )
-        return effect
-    }
-
-    private fun installOverride() {
-        val target = scrim
-        if (target == null) {
-            selectedEffect = SelectedEffect.STOCK
-            logBuffer.log(TAG, LogLevel.DEBUG, {}, { "override skipped, not initialized" })
-            return
-        }
-        overrideActive = true
-        target.screenOffRevealEffectOverride = CrtCollapseReveal
-        logBuffer.log(TAG, LogLevel.DEBUG, {}, { "override installed" })
-    }
-
-    private fun endTransition(reason: EndReason) {
-        if (animationState != AnimationState.RUNNING) return
-        animationState = AnimationState.IDLE
-        lastEndReason = reason
-        if (reason == EndReason.COMPLETED) completions++ else cancellations++
-        if (overrideActive) {
-            runGuarded(STAGE_CLEAR) { clearOverride() }
-        }
-        logBuffer.log(TAG, LogLevel.DEBUG, { str1 = reason.name }, { "transition ended=$str1" })
-    }
-
-    private fun clearOverride() {
-        overrideActive = false
-        scrim?.screenOffRevealEffectOverride = null
-    }
-
-    /** Runs [block]; on failure clears the override, falls back to Stock, and reports. */
-    private inline fun <T> runGuarded(stage: String, block: () -> T): T? =
-        try {
-            block()
-        } catch (e: RuntimeException) {
-            onFailure(stage, e)
-            null
-        }
-
-    private fun onFailure(stage: String, throwable: RuntimeException) {
-        selectedEffect = SelectedEffect.STOCK
-        clearOverrideAfterFailure()
-        val exception = throwable.javaClass.simpleName
-        logBuffer.log(
-            TAG,
-            LogLevel.WARNING,
-            {
-                str1 = stage
-                str2 = exception
-            },
-            { "failed stage=$str1 exception=$str2" },
-        )
-        Log.w(TAG, "CRT failure stage=$stage exception=$exception")
-    }
-
-    private fun clearOverrideAfterFailure() {
-        overrideActive = false
-        try {
-            scrim?.screenOffRevealEffectOverride = null
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "CRT cleanup failed exception=${e.javaClass.simpleName}")
-        }
     }
 
     companion object {
         const val TAG = "CrtScreenOffAnimation"
         private const val NONE = "none"
-        private const val STAGE_SAMPLE = "sample"
-        private const val STAGE_INSTALL = "install"
-        private const val STAGE_CLEAR = "clear"
     }
 }
