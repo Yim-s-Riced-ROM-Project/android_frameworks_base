@@ -21,7 +21,8 @@ import java.io.PrintWriter;
 /**
  * Records CRT screen-off transitions for logcat and {@code dumpsys display}: counters, the last
  * path and outcome, and a bounded history that survives logcat rotation. Holds only enums, the
- * setting integer, uptime, and counters. Called on the DisplayPowerController handler thread.
+ * setting integer, the speed percent and duration, uptime, and counters. Called on the
+ * DisplayPowerController handler thread.
  */
 final class CrtScreenOffRecorder {
     /** How a started CRT transition ended. */
@@ -35,6 +36,8 @@ final class CrtScreenOffRecorder {
     private boolean mRunning;
     private CrtScreenOffPolicy.Path mLastPath;
     private String mLastOutcome = "NONE";
+    private int mLastSpeedPercent = -1;
+    private long mLastDurationMs = -1;
     private int mStarts;
     private int mCompletions;
     private int mCancellations;
@@ -49,13 +52,17 @@ final class CrtScreenOffRecorder {
         return mRunning && mLastPath == path;
     }
 
-    /** Marks a CRT transition as running and returns its log line. */
-    String started(long uptimeMillis, CrtScreenOffPolicy.Path path, int setting) {
+    /** Marks a CRT transition as running at its effective speed and returns its log line. */
+    String started(long uptimeMillis, CrtScreenOffPolicy.Path path, int setting,
+            int speedPercent, long durationMs) {
         mRunning = true;
         mLastPath = path;
         mLastOutcome = "RUNNING";
+        mLastSpeedPercent = speedPercent;
+        mLastDurationMs = durationMs;
         mStarts++;
-        return remember(uptimeMillis, "start path=" + path + " setting=" + setting);
+        return remember(uptimeMillis, "start path=" + path + " setting=" + setting
+                + " speed=" + speedPercent + " durationMs=" + durationMs);
     }
 
     /** Ends the running transition; returns its log line, or null when none is running. */
@@ -88,6 +95,8 @@ final class CrtScreenOffRecorder {
         pw.println("    running=" + mRunning);
         pw.println("    lastPath=" + mLastPath);
         pw.println("    lastOutcome=" + mLastOutcome);
+        pw.println("    lastSpeedPercent=" + mLastSpeedPercent);
+        pw.println("    lastDurationMs=" + mLastDurationMs);
         pw.println("    starts=" + mStarts);
         pw.println("    completions=" + mCompletions);
         pw.println("    cancellations=" + mCancellations);
