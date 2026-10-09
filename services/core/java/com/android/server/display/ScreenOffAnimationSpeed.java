@@ -17,7 +17,7 @@ package com.android.server.display;
 
 /**
  * The user's playback speed for custom screen-off effects, as a percent of normal speed: 200
- * plays twice as fast. Stock never reads it. Each effect passes its own base duration.
+ * plays twice as fast. Stock ignores it. Each effect passes its own base duration.
  */
 final class ScreenOffAnimationSpeed {
     static final String SETTING_KEY = "lineage_screen_off_animation_speed";
