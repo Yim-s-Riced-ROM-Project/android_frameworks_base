@@ -2621,6 +2621,88 @@ public final class DisplayPowerControllerTest {
     }
 
     @Test
+    public void tearSelected_screenOff_preparesTearAtLinear600ms() {
+        assertGlitchOffAnimator(2, ColorFade.MODE_GLITCH_TEAR, 100, 600L);
+    }
+
+    @Test
+    public void corruptSelected_screenOff_preparesCorrupt() {
+        assertGlitchOffAnimator(3, ColorFade.MODE_GLITCH_CORRUPT, 100, 600L);
+    }
+
+    @Test
+    public void signalLossSelected_halfSpeed_runs1200ms() {
+        assertGlitchOffAnimator(4, ColorFade.MODE_GLITCH_SIGNAL_LOSS, 50, 1200L);
+    }
+
+    @Test
+    public void tearSelected_doubleSpeed_runs300ms() {
+        assertGlitchOffAnimator(2, ColorFade.MODE_GLITCH_TEAR, 200, 300L);
+    }
+
+    @Test
+    public void glitchSelected_dozeAtLock_preparesGlitch() {
+        setScreenOffAnimationSetting(3);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenPrepareSucceeds(ColorFade.MODE_GLITCH_CORRUPT);
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+
+        verify(mHolder.displayPowerState)
+                .prepareColorFade(any(), eq(ColorFade.MODE_GLITCH_CORRUPT));
+        assertEquals(600L, colorFadeOffAnimator().getDuration());
+    }
+
+    @Test
+    public void glitchSelected_prepareFails_fallsBackToStock400ms() {
+        setScreenOffAnimationSetting(2);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded(); // prepareColorFade returns false on the mock
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        InOrder order = inOrder(mHolder.displayPowerState);
+        order.verify(mHolder.displayPowerState)
+                .prepareColorFade(any(), eq(ColorFade.MODE_GLITCH_TEAR));
+        order.verify(mHolder.displayPowerState).prepareColorFade(any(),
+                intThat(mode -> mode != ColorFade.MODE_GLITCH_TEAR));
+        assertEquals(400L, colorFadeOffAnimator().getDuration());
+    }
+
+    @Test
+    public void glitchSelected_wakeDuringAnimation_cancelsAndDismisses() {
+        setScreenOffAnimationSetting(4);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenPrepareSucceeds(ColorFade.MODE_GLITCH_SIGNAL_LOSS);
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+        clearInvocations(mHolder.displayPowerState);
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+
+        assertFalse(colorFadeOffAnimator().isStarted());
+        verify(mHolder.displayPowerState).setColorFadeLevel(1.0f);
+        verify(mHolder.displayPowerState).dismissColorFade();
+    }
+
+    @Test
+    public void stockSelected_screenOff_neverPreparesGlitch() {
+        setScreenOffAnimationSetting(0);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(),
+                intThat(mode -> mode >= ColorFade.MODE_GLITCH_TEAR));
+    }
+
+    @Test
     public void stockSelected_halfSpeed_keeps400msAnimator() {
         assertStockDurationAtSpeed(50);
     }
@@ -2865,6 +2947,27 @@ public final class DisplayPowerControllerTest {
         assertTrue(animator.isStarted());
         assertEquals(expectedMillis, animator.getDuration());
         assertTrue(animator.getInterpolator() instanceof LinearInterpolator);
+    }
+
+    private void assertGlitchOffAnimator(int setting, int mode, int speed, long expectedMillis) {
+        setScreenOffAnimationSetting(setting);
+        setScreenOffAnimationSpeed(speed);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenPrepareSucceeds(mode);
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        verify(mHolder.displayPowerState).prepareColorFade(any(), eq(mode));
+        ObjectAnimator animator = colorFadeOffAnimator();
+        assertTrue(animator.isStarted());
+        assertEquals(expectedMillis, animator.getDuration());
+        assertTrue(animator.getInterpolator() instanceof LinearInterpolator);
+    }
+
+    private void givenPrepareSucceeds(int mode) {
+        when(mHolder.displayPowerState.prepareColorFade(any(), eq(mode))).thenReturn(true);
     }
 
     private void givenScreenOnAndUnfaded() {
