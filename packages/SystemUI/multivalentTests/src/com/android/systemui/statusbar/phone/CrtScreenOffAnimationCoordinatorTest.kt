@@ -96,6 +96,21 @@ class CrtScreenOffAnimationCoordinatorTest : SysuiTestCase() {
     }
 
     @Test
+    fun isCrtOwnedByDisplay_trueForEveryGlitchEffect() {
+        for (selection in
+            listOf(
+                ScreenOffAnimationSelection.TEAR,
+                ScreenOffAnimationSelection.CORRUPT,
+                ScreenOffAnimationSelection.SIGNAL_LOSS,
+            )) {
+            settings.value = ScreenOffAnimationSetting(selection.ordinal, selection)
+            assertThat(underTest.isCrtOwnedByDisplay()).isTrue()
+        }
+        settings.value = STOCK_SETTING
+        assertThat(underTest.isCrtOwnedByDisplay()).isFalse()
+    }
+
+    @Test
     fun dump_containsEveryDocumentedField() {
         val dump = dump()
 
