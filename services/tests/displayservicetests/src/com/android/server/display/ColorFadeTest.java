@@ -18,11 +18,15 @@ package com.android.server.display;
 
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -78,5 +82,43 @@ public class ColorFadeTest {
         colorFade.dismiss();
 
         verify(mDisplayManagerInternalMock, never()).systemScreenshot(anyInt());
+    }
+
+    @Test
+    public void modeFor_mapsEachCustomEffect() {
+        assertEquals(ColorFade.MODE_CRT, ColorFade.modeFor(ScreenOffEffect.CRT));
+        assertEquals(ColorFade.MODE_GLITCH_TEAR, ColorFade.modeFor(ScreenOffEffect.TEAR));
+        assertEquals(ColorFade.MODE_GLITCH_CORRUPT, ColorFade.modeFor(ScreenOffEffect.CORRUPT));
+        assertEquals(ColorFade.MODE_GLITCH_SIGNAL_LOSS,
+                ColorFade.modeFor(ScreenOffEffect.SIGNAL_LOSS));
+        assertThrows(IllegalArgumentException.class,
+                () -> ColorFade.modeFor(ScreenOffEffect.STOCK));
+    }
+
+    @Test
+    public void glitchEffectFor_isTheInverseForGlitchModesOnly() {
+        assertEquals(ScreenOffEffect.TEAR, ColorFade.glitchEffectFor(ColorFade.MODE_GLITCH_TEAR));
+        assertEquals(ScreenOffEffect.CORRUPT,
+                ColorFade.glitchEffectFor(ColorFade.MODE_GLITCH_CORRUPT));
+        assertEquals(ScreenOffEffect.SIGNAL_LOSS,
+                ColorFade.glitchEffectFor(ColorFade.MODE_GLITCH_SIGNAL_LOSS));
+        assertNull(ColorFade.glitchEffectFor(ColorFade.MODE_CRT));
+        assertNull(ColorFade.glitchEffectFor(ColorFade.MODE_COOL_DOWN));
+    }
+
+    @Test
+    public void testPrepareGlitchCapturesScreen_andFailsClosedWithoutScreenshot() {
+        DisplayInfo info = new DisplayInfo();
+        info.logicalWidth = 100;
+        info.logicalHeight = 200;
+        info.logicalDensityDpi = 320;
+        info.layerStack = Integer.MAX_VALUE - 1;
+        when(mDisplayManagerInternalMock.getDisplayInfo(eq(DISPLAY_ID))).thenReturn(info);
+        when(mDisplayManagerInternalMock.systemScreenshot(eq(DISPLAY_ID))).thenReturn(null);
+        ColorFade colorFade = new ColorFade(DISPLAY_ID, mDisplayManagerInternalMock);
+
+        assertFalse(colorFade.prepare(mContext, ColorFade.MODE_GLITCH_TEAR));
+
+        verify(mDisplayManagerInternalMock, times(1)).systemScreenshot(DISPLAY_ID);
     }
 }

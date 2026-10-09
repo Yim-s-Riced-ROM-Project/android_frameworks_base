@@ -17,9 +17,10 @@
 package com.android.server.display;
 
 /**
- * Decides whether a default-display screen-off plays the CRT animation. The setting is the
- * per-user {@code Settings.Secure} key SystemUI and Settings already use: 1 selects CRT, and any
- * other or missing value selects Stock. Pure Java so it is testable off device.
+ * Decides whether a default-display screen-off plays a custom effect. The setting is the
+ * per-user {@code Settings.Secure} key SystemUI and Settings already use;
+ * {@link ScreenOffEffect#from} picks the effect, and Stock or unknown values run stock. Pure Java
+ * so it is testable off device.
  */
 final class CrtScreenOffPolicy {
     static final String SETTING_KEY = "lineage_screen_off_animation";
@@ -31,6 +32,7 @@ final class CrtScreenOffPolicy {
 
     /** The outcome, in gate order. Every value except {@link #CRT} runs the stock path. */
     enum Decision {
+        /** A custom effect (CRT or a glitch) plays. The name predates the glitch effects. */
         CRT,
         STOCK_SELECTED,
         NOT_DEFAULT_DISPLAY,
@@ -54,7 +56,9 @@ final class CrtScreenOffPolicy {
      */
     static Decision decide(int settingValue, boolean defaultDisplay,
             boolean colorFadeEnabled, boolean performScreenOffTransition, boolean screenOn) {
-        if (settingValue != SETTING_CRT) return Decision.STOCK_SELECTED;
+        if (ScreenOffEffect.from(settingValue) == ScreenOffEffect.STOCK) {
+            return Decision.STOCK_SELECTED;
+        }
         if (!defaultDisplay) return Decision.NOT_DEFAULT_DISPLAY;
         if (!colorFadeEnabled) return Decision.COLOR_FADE_DISABLED;
         if (!performScreenOffTransition) {

@@ -70,6 +70,33 @@ class ScreenOffAnimationSettingsRepositoryTest : SysuiTestCase() {
     }
 
     @Test
+    fun twoToFour_selectGlitchEffects() = runTest {
+        val expected =
+            mapOf(
+                2 to ScreenOffAnimationSelection.TEAR,
+                3 to ScreenOffAnimationSelection.CORRUPT,
+                4 to ScreenOffAnimationSelection.SIGNAL_LOSS,
+            )
+        for ((value, selection) in expected) {
+            secureSettingsRepository.setInt(SETTING_KEY, value)
+            val underTest = createRepository()
+            runCurrent()
+
+            assertThat(underTest.setting.value)
+                .isEqualTo(ScreenOffAnimationSetting(value, selection))
+        }
+    }
+
+    @Test
+    fun negativeValue_selectsStock() = runTest {
+        secureSettingsRepository.setInt(SETTING_KEY, -1)
+        val underTest = createRepository()
+        runCurrent()
+
+        assertThat(underTest.setting.value.selection).isEqualTo(ScreenOffAnimationSelection.STOCK)
+    }
+
+    @Test
     fun unknownValue_selectsStock() = runTest {
         secureSettingsRepository.setInt(SETTING_KEY, 7)
         val underTest = createRepository()

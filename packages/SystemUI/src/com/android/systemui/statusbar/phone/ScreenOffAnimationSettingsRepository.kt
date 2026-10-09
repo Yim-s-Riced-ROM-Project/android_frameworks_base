@@ -33,19 +33,23 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 
-/** Unlocked screen-off animation chosen by the user. */
+/** Screen-off effect chosen by the user. Declaration order matches the stored values 0–4. */
 enum class ScreenOffAnimationSelection {
     STOCK,
     CRT,
+    TEAR,
+    CORRUPT,
+    SIGNAL_LOSS,
 }
 
 /** Raw per-user setting value and the typed selection it resolves to. */
 data class ScreenOffAnimationSetting(val rawValue: Int, val selection: ScreenOffAnimationSelection)
 
 /**
- * Observes the private per-user [SETTING_KEY] secure setting. Missing, unknown, and unreadable
- * values resolve to [ScreenOffAnimationSelection.STOCK]. A failed read publishes Stock and is
- * retried a bounded number of times; if every retry fails, Stock stays until SystemUI restarts.
+ * Observes the private per-user [SETTING_KEY] secure setting: 0 Stock, 1 CRT, 2 Tear, 3 Corrupt,
+ * 4 Signal loss. Missing, unknown, and unreadable values resolve to
+ * [ScreenOffAnimationSelection.STOCK]. A failed read publishes Stock and is retried a bounded
+ * number of times; if every retry fails, Stock stays until SystemUI restarts.
  */
 @SysUISingleton
 class ScreenOffAnimationSettingsRepository
@@ -78,7 +82,6 @@ constructor(
         private const val MAX_READ_RETRIES = 3L
         private const val READ_RETRY_DELAY_MS = 1_000L
         private const val STOCK_VALUE = 0
-        private const val CRT_VALUE = 1
         private val STOCK_SETTING =
             ScreenOffAnimationSetting(STOCK_VALUE, ScreenOffAnimationSelection.STOCK)
 
@@ -86,8 +89,8 @@ constructor(
             ScreenOffAnimationSetting(
                 rawValue = value,
                 selection =
-                    if (value == CRT_VALUE) ScreenOffAnimationSelection.CRT
-                    else ScreenOffAnimationSelection.STOCK,
+                    ScreenOffAnimationSelection.entries.getOrNull(value)
+                        ?: ScreenOffAnimationSelection.STOCK,
             )
     }
 }

@@ -153,8 +153,6 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private static final int COLOR_FADE_OFF_ANIMATION_DURATION_MILLIS = 400;
 
     private static final String CRT_TAG = "CrtScreenOffAnimation";
-    // CRT duration at 1x; ScreenOffAnimationSpeed scales it.
-    private static final int CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS = 500;
 
     private static final int MSG_UPDATE_POWER_STATE = 1;
     private static final int MSG_SCREEN_ON_UNBLOCKED = 2;
@@ -2610,15 +2608,19 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         return true;
     }
 
-    /** Prepares MODE_CRT and speed-scaled CRT timing when the policy allows; records fallbacks. */
+    /**
+     * Prepares the selected custom effect (CRT or a glitch) and its speed-scaled timing when the
+     * policy allows; records fallbacks.
+     */
     private boolean prepareCrtColorFade(CrtScreenOffPolicy.Path path,
             boolean performScreenOffTransition) {
+        final ScreenOffEffect effect = ScreenOffEffect.from(mScreenOffAnimationSetting);
         CrtScreenOffPolicy.Decision decision = CrtScreenOffPolicy.decide(
                 mScreenOffAnimationSetting, mDisplayId == Display.DEFAULT_DISPLAY,
                 mColorFadeEnabled, performScreenOffTransition,
                 mPowerState.getScreenState() == Display.STATE_ON);
         if (decision == CrtScreenOffPolicy.Decision.CRT
-                && !mPowerState.prepareColorFade(mContext, ColorFade.MODE_CRT)) {
+                && !mPowerState.prepareColorFade(mContext, ColorFade.modeFor(effect))) {
             decision = CrtScreenOffPolicy.Decision.PREPARE_FAILED;
         }
         final long now = mClock.uptimeMillis();
@@ -2629,10 +2631,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             return false;
         }
         final long durationMs = ScreenOffAnimationSpeed.scaledDurationMillis(
-                CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS, mScreenOffAnimationSpeedPercent);
+                effect.baseDurationMillis, mScreenOffAnimationSpeedPercent);
         mColorFadeOffAnimator.setDuration(durationMs);
         mColorFadeOffAnimator.setInterpolator(mCrtColorFadeInterpolator);
-        logCrt(mCrtRecorder.started(now, path, mScreenOffAnimationSetting,
+        logCrt(mCrtRecorder.started(now, path, mScreenOffAnimationSetting, effect,
                 mScreenOffAnimationSpeedPercent, durationMs));
         return true;
     }

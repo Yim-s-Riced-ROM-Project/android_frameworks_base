@@ -95,9 +95,12 @@ constructor(
         }
     }
 
-    /** Whether CRT is selected, in which case DisplayPowerController owns every screen-off. */
+    /**
+     * Whether a non-Stock effect is selected (CRT or a glitch), in which case
+     * DisplayPowerController owns every screen-off.
+     */
     fun isCrtOwnedByDisplay(): Boolean =
-        settingsRepository.setting.value.selection == ScreenOffAnimationSelection.CRT
+        settingsRepository.setting.value.selection != ScreenOffAnimationSelection.STOCK
 
     /** Records the latest stock eligibility decision; logs only when it changes. */
     fun onStockDecision(decision: ScreenOffAnimationDecision) {

@@ -1749,6 +1749,9 @@
 
   <java-symbol type="raw" name="color_fade_vert" />
   <java-symbol type="raw" name="color_fade_frag" />
+  <java-symbol type="raw" name="color_fade_glitch_tear" />
+  <java-symbol type="raw" name="color_fade_glitch_corrupt" />
+  <java-symbol type="raw" name="color_fade_glitch_signal" />
   <java-symbol type="raw" name="loaderror" />
   <java-symbol type="raw" name="nodomain" />
 
