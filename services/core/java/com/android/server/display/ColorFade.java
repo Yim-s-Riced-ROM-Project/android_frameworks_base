@@ -133,6 +133,12 @@ final class ColorFade {
     private float mCrtDensity;
     private boolean mSurfaceIsCrt;
 
+    // Glitch modes: the effect whose shader is loaded, null for every other mode.
+    private ScreenOffEffect mGlitchEffect;
+    private final GlitchFrame mGlitchFrame = new GlitchFrame();
+    private int mResolutionLoc, mLevelLoc, mTickLoc, mIntensityLoc, mSplitLoc, mShareLoc;
+    private int mDropFrameLoc, mRollLoc, mStaticAmountLoc, mDarkLoc;
+
     /**
      * Animates an color fade warming up.
      */
@@ -153,6 +159,15 @@ final class ColorFade {
      */
     public static final int MODE_CRT = 3;
 
+    /** Draws the Tear glitch over a screenshot of the display. */
+    public static final int MODE_GLITCH_TEAR = 4;
+
+    /** Draws the Corrupt glitch over a screenshot of the display. */
+    public static final int MODE_GLITCH_CORRUPT = 5;
+
+    /** Draws the Signal loss glitch over a screenshot of the display. */
+    public static final int MODE_GLITCH_SIGNAL_LOSS = 6;
+
     public ColorFade(int displayId) {
         this(displayId, LocalServices.getService(DisplayManagerInternal.class));
     }
@@ -161,6 +176,47 @@ final class ColorFade {
     ColorFade(int displayId, DisplayManagerInternal displayManagerInternal) {
         mDisplayId = displayId;
         mDisplayManagerInternal = displayManagerInternal;
+    }
+
+    /** Returns the mode that draws {@code effect}; Stock has none. */
+    static int modeFor(ScreenOffEffect effect) {
+        switch (effect) {
+            case CRT:
+                return MODE_CRT;
+            case TEAR:
+                return MODE_GLITCH_TEAR;
+            case CORRUPT:
+                return MODE_GLITCH_CORRUPT;
+            case SIGNAL_LOSS:
+                return MODE_GLITCH_SIGNAL_LOSS;
+            default:
+                throw new IllegalArgumentException("Stock has no ColorFade mode");
+        }
+    }
+
+    /** Returns the glitch effect a mode draws, or null when the mode is not a glitch. */
+    static ScreenOffEffect glitchEffectFor(int mode) {
+        switch (mode) {
+            case MODE_GLITCH_TEAR:
+                return ScreenOffEffect.TEAR;
+            case MODE_GLITCH_CORRUPT:
+                return ScreenOffEffect.CORRUPT;
+            case MODE_GLITCH_SIGNAL_LOSS:
+                return ScreenOffEffect.SIGNAL_LOSS;
+            default:
+                return null;
+        }
+    }
+
+    private static int glitchShaderFor(ScreenOffEffect effect) {
+        switch (effect) {
+            case TEAR:
+                return com.android.internal.R.raw.color_fade_glitch_tear;
+            case CORRUPT:
+                return com.android.internal.R.raw.color_fade_glitch_corrupt;
+            default:
+                return com.android.internal.R.raw.color_fade_glitch_signal;
+        }
     }
 
     /**
@@ -176,6 +232,7 @@ final class ColorFade {
         }
 
         mMode = mode;
+        mGlitchEffect = glitchEffectFor(mode);
 
         DisplayInfo displayInfo = mDisplayManagerInternal.getDisplayInfo(mDisplayId);
         if (displayInfo == null) {
@@ -257,7 +314,7 @@ final class ColorFade {
         // times.  The rest of the animation should run smoothly thereafter.
         // The frames we draw here aren't visible because we are essentially just
         // painting the screenshot as-is.
-        if (mode == MODE_COOL_DOWN) {
+        if (mode == MODE_COOL_DOWN || mGlitchEffect != null) {
             for (int i = 0; i < DEJANK_FRAMES; i++) {
                 draw(1.0f);
             }
@@ -298,10 +355,11 @@ final class ColorFade {
     }
 
     private boolean initGLShaders(Context context) {
+        final int fragment = mGlitchEffect == null
+                ? com.android.internal.R.raw.color_fade_frag : glitchShaderFor(mGlitchEffect);
         int vshader = loadShader(context, com.android.internal.R.raw.color_fade_vert,
                 GLES20.GL_VERTEX_SHADER);
-        int fshader = loadShader(context, com.android.internal.R.raw.color_fade_frag,
-                GLES20.GL_FRAGMENT_SHADER);
+        int fshader = loadShader(context, fragment, GLES20.GL_FRAGMENT_SHADER);
         GLES20.glReleaseShaderCompiler();
         if (vshader == 0 || fshader == 0) return false;
 
@@ -313,6 +371,15 @@ final class ColorFade {
         GLES20.glDeleteShader(fshader);
 
         GLES20.glLinkProgram(mProgram);
+        final int[] linked = new int[1];
+        GLES20.glGetProgramiv(mProgram, GLES20.GL_LINK_STATUS, linked, 0);
+        if (linked[0] == 0) {
+            Slog.e(TAG, "Could not link ColorFade program: "
+                    + GLES20.glGetProgramInfoLog(mProgram));
+            GLES20.glDeleteProgram(mProgram);
+            mProgram = 0;
+            return false;
+        }
 
         mVertexLoc = GLES20.glGetAttribLocation(mProgram, "position");
         mTexCoordLoc = GLES20.glGetAttribLocation(mProgram, "uv");
@@ -323,6 +390,17 @@ final class ColorFade {
         mOpacityLoc = GLES20.glGetUniformLocation(mProgram, "opacity");
         mGammaLoc = GLES20.glGetUniformLocation(mProgram, "gamma");
         mTexUnitLoc = GLES20.glGetUniformLocation(mProgram, "texUnit");
+
+        mResolutionLoc = GLES20.glGetUniformLocation(mProgram, "resolution");
+        mLevelLoc = GLES20.glGetUniformLocation(mProgram, "level");
+        mTickLoc = GLES20.glGetUniformLocation(mProgram, "tick");
+        mIntensityLoc = GLES20.glGetUniformLocation(mProgram, "intensity");
+        mSplitLoc = GLES20.glGetUniformLocation(mProgram, "split");
+        mShareLoc = GLES20.glGetUniformLocation(mProgram, "share");
+        mDropFrameLoc = GLES20.glGetUniformLocation(mProgram, "dropFrame");
+        mRollLoc = GLES20.glGetUniformLocation(mProgram, "roll");
+        mStaticAmountLoc = GLES20.glGetUniformLocation(mProgram, "staticAmount");
+        mDarkLoc = GLES20.glGetUniformLocation(mProgram, "dark");
 
         GLES20.glUseProgram(mProgram);
         GLES20.glUniform1i(mTexUnitLoc, 0);
@@ -496,12 +574,17 @@ final class ColorFade {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
 
             // Draw the frame.
-            double one_minus_level = 1 - level;
-            double cos = Math.cos(Math.PI * one_minus_level);
-            double sign = cos < 0 ? -1 : 1;
-            float opacity = (float) -Math.pow(one_minus_level, 2) + 1;
-            float gamma = (float) ((0.5d * sign * Math.pow(cos, 2) + 0.5d) * 0.9d + 0.1d);
-            drawFaded(opacity, 1.f / gamma);
+            if (mGlitchEffect != null) {
+                GlitchSchedule.at(mGlitchEffect, level, mGlitchFrame);
+                drawGlitch(level);
+            } else {
+                double one_minus_level = 1 - level;
+                double cos = Math.cos(Math.PI * one_minus_level);
+                double sign = cos < 0 ? -1 : 1;
+                float opacity = (float) -Math.pow(one_minus_level, 2) + 1;
+                float gamma = (float) ((0.5d * sign * Math.pow(cos, 2) + 0.5d) * 0.9d + 0.1d);
+                drawFaded(opacity, 1.f / gamma);
+            }
             if (checkGlErrors("drawFrame")) {
                 return false;
             }
@@ -517,20 +600,36 @@ final class ColorFade {
         if (DEBUG) {
             Slog.d(TAG, "drawFaded: opacity=" + opacity + ", gamma=" + gamma);
         }
-        // Use shaders
         GLES20.glUseProgram(mProgram);
-
-        // Set Uniforms
-        GLES20.glUniformMatrix4fv(mProjMatrixLoc, 1, false, mProjMatrix, 0);
-        GLES20.glUniformMatrix4fv(mTexMatrixLoc, 1, false, mTexMatrix, 0);
         GLES20.glUniform1f(mOpacityLoc, opacity);
         GLES20.glUniform1f(mGammaLoc, gamma);
+        drawTexturedQuad();
+    }
 
-        // Use textures
+    /** Sets the frame's glitch uniforms from {@link #mGlitchFrame}; draws the screenshot quad. */
+    private void drawGlitch(float level) {
+        GLES20.glUseProgram(mProgram);
+        GLES20.glUniform2f(mResolutionLoc, mDisplayWidth, mDisplayHeight);
+        GLES20.glUniform1f(mLevelLoc, level);
+        GLES20.glUniform1f(mTickLoc, mGlitchFrame.tick);
+        GLES20.glUniform1f(mIntensityLoc, mGlitchFrame.intensity);
+        GLES20.glUniform1f(mSplitLoc, mGlitchFrame.split);
+        GLES20.glUniform1f(mShareLoc, mGlitchFrame.share);
+        GLES20.glUniform1f(mDropFrameLoc, mGlitchFrame.dropFrame);
+        GLES20.glUniform1f(mRollLoc, mGlitchFrame.roll);
+        GLES20.glUniform1f(mStaticAmountLoc, mGlitchFrame.staticAmount);
+        GLES20.glUniform1f(mDarkLoc, mGlitchFrame.dark);
+        drawTexturedQuad();
+    }
+
+    /** Draws the screenshot quad with the bound program; the caller has set its uniforms. */
+    private void drawTexturedQuad() {
+        GLES20.glUniformMatrix4fv(mProjMatrixLoc, 1, false, mProjMatrix, 0);
+        GLES20.glUniformMatrix4fv(mTexMatrixLoc, 1, false, mTexMatrix, 0);
+
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, mTexNames[0]);
 
-        // draw the plane
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, mGLBuffers[0]);
         GLES20.glEnableVertexAttribArray(mVertexLoc);
         GLES20.glVertexAttribPointer(mVertexLoc, 2, GLES20.GL_FLOAT, false, 0, 0);
@@ -541,7 +640,6 @@ final class ColorFade {
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_FAN, 0, 4);
 
-        // clean up
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0);
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
     }
@@ -961,6 +1059,7 @@ final class ColorFade {
         pw.println("  mPrepared=" + mPrepared);
         pw.println("  mMode=" + mMode);
         pw.println("  mSurfaceIsCrt=" + mSurfaceIsCrt);
+        pw.println("  mGlitchEffect=" + mGlitchEffect);
         pw.println("  mDisplayLayerStack=" + mDisplayLayerStack);
         pw.println("  mDisplayWidth=" + mDisplayWidth);
         pw.println("  mDisplayHeight=" + mDisplayHeight);
