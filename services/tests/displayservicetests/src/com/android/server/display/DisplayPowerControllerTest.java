@@ -2591,6 +2591,59 @@ public final class DisplayPowerControllerTest {
     }
 
     @Test
+    public void crtSelected_halfSpeed_runs1000msAnimator() {
+        assertCrtDurationAtSpeed(50, 1000L);
+    }
+
+    @Test
+    public void crtSelected_doubleSpeed_runs250msAnimator() {
+        assertCrtDurationAtSpeed(200, 250L);
+    }
+
+    @Test
+    public void crtSelected_speedOutOfRange_isClamped() {
+        assertCrtDurationAtSpeed(10, 1000L);
+    }
+
+    @Test
+    public void crtSelected_dozeAtLock_usesSpeed() {
+        setScreenOffAnimationSetting(1);
+        setScreenOffAnimationSpeed(200);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+
+        verify(mHolder.displayPowerState).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+        assertEquals(250L, colorFadeOffAnimator().getDuration());
+    }
+
+    @Test
+    public void stockSelected_halfSpeed_keeps400msAnimator() {
+        assertStockDurationAtSpeed(50);
+    }
+
+    @Test
+    public void stockSelected_doubleSpeed_keeps400msAnimator() {
+        assertStockDurationAtSpeed(200);
+    }
+
+    @Test
+    public void crtFallback_atHalfSpeed_restoresStock400ms() {
+        setScreenOffAnimationSetting(1);
+        setScreenOffAnimationSpeed(50);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded(); // prepareColorFade(MODE_CRT) returns false on the mock
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        assertEquals(400L, colorFadeOffAnimator().getDuration());
+    }
+
+    @Test
     public void crtSelected_wakeDuringAnimation_cancelsAndDismisses() {
         setScreenOffAnimationSetting(1);
         mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
@@ -2778,6 +2831,40 @@ public final class DisplayPowerControllerTest {
     private void setScreenOffAnimationSetting(int value) {
         Settings.Secure.putIntForUser(mContext.getContentResolver(),
                 "lineage_screen_off_animation", value, UserHandle.USER_CURRENT);
+    }
+
+    private void setScreenOffAnimationSpeed(int percent) {
+        Settings.Secure.putIntForUser(mContext.getContentResolver(),
+                "lineage_screen_off_animation_speed", percent, UserHandle.USER_CURRENT);
+    }
+
+    private void assertStockDurationAtSpeed(int speed) {
+        setScreenOffAnimationSetting(0);
+        setScreenOffAnimationSpeed(speed);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+        assertEquals(400L, colorFadeOffAnimator().getDuration());
+    }
+
+    private void assertCrtDurationAtSpeed(int speed, long expectedMillis) {
+        setScreenOffAnimationSetting(1);
+        setScreenOffAnimationSpeed(speed);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestPolicy(DisplayPowerRequest.POLICY_OFF);
+
+        ObjectAnimator animator = colorFadeOffAnimator();
+        assertTrue(animator.isStarted());
+        assertEquals(expectedMillis, animator.getDuration());
+        assertTrue(animator.getInterpolator() instanceof LinearInterpolator);
     }
 
     private void givenScreenOnAndUnfaded() {

@@ -153,6 +153,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private static final int COLOR_FADE_OFF_ANIMATION_DURATION_MILLIS = 400;
 
     private static final String CRT_TAG = "CrtScreenOffAnimation";
+    // CRT duration at 1x; ScreenOffAnimationSpeed scales it.
     private static final int CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS = 500;
 
     private static final int MSG_UPDATE_POWER_STATE = 1;
@@ -502,6 +503,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
     // CRT screen-off animation: setting cache (handler thread) and transition record.
     private int mScreenOffAnimationSetting = CrtScreenOffPolicy.SETTING_STOCK;
+    private int mScreenOffAnimationSpeedPercent = ScreenOffAnimationSpeed.DEFAULT_PERCENT;
     // Decides once per awake period whether CRT plays at the doze entry.
     private final CrtDozeEntryGate mCrtDozeEntryGate = new CrtDozeEntryGate();
     // Set when a DOZE-path CRT completes: the next brightness change jumps instead of ramping,
@@ -1092,6 +1094,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 false /*notifyForDescendants*/, mSettingsObserver, UserHandle.USER_ALL);
         mContext.getContentResolver().registerContentObserver(
                 Settings.Secure.getUriFor(CrtScreenOffPolicy.SETTING_KEY),
+                false /*notifyForDescendants*/, mSettingsObserver, UserHandle.USER_ALL);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(ScreenOffAnimationSpeed.SETTING_KEY),
                 false /*notifyForDescendants*/, mSettingsObserver, UserHandle.USER_ALL);
         updateScreenOffAnimationSetting();
         handleBrightnessModeChange();
@@ -2563,6 +2568,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         mScreenOffAnimationSetting = Settings.Secure.getIntForUser(mContext.getContentResolver(),
                 CrtScreenOffPolicy.SETTING_KEY, CrtScreenOffPolicy.SETTING_STOCK,
                 UserHandle.USER_CURRENT);
+        mScreenOffAnimationSpeedPercent = ScreenOffAnimationSpeed.percent(
+                Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                        ScreenOffAnimationSpeed.SETTING_KEY,
+                        ScreenOffAnimationSpeed.DEFAULT_PERCENT, UserHandle.USER_CURRENT));
     }
 
     /** Prepares the screen-off fade: CRT when selected and possible, otherwise stock. */
@@ -2601,7 +2610,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         return true;
     }
 
-    /** Prepares MODE_CRT and CRT timing when the policy allows; records any fallback. */
+    /** Prepares MODE_CRT and speed-scaled CRT timing when the policy allows; records fallbacks. */
     private boolean prepareCrtColorFade(CrtScreenOffPolicy.Path path,
             boolean performScreenOffTransition) {
         CrtScreenOffPolicy.Decision decision = CrtScreenOffPolicy.decide(
@@ -2619,9 +2628,12 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             }
             return false;
         }
-        mColorFadeOffAnimator.setDuration(CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS);
+        final long durationMs = ScreenOffAnimationSpeed.scaledDurationMillis(
+                CRT_SCREEN_OFF_ANIMATION_DURATION_MILLIS, mScreenOffAnimationSpeedPercent);
+        mColorFadeOffAnimator.setDuration(durationMs);
         mColorFadeOffAnimator.setInterpolator(mCrtColorFadeInterpolator);
-        logCrt(mCrtRecorder.started(now, path, mScreenOffAnimationSetting));
+        logCrt(mCrtRecorder.started(now, path, mScreenOffAnimationSetting,
+                mScreenOffAnimationSpeedPercent, durationMs));
         return true;
     }
 
@@ -3431,7 +3443,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
         @Override
         public void onChange(boolean selfChange, Uri uri) {
-            if (uri.equals(Settings.Secure.getUriFor(CrtScreenOffPolicy.SETTING_KEY))) {
+            if (uri.equals(Settings.Secure.getUriFor(CrtScreenOffPolicy.SETTING_KEY))
+                    || uri.equals(Settings.Secure.getUriFor(
+                            ScreenOffAnimationSpeed.SETTING_KEY))) {
                 // The observer runs on mHandler, the thread that owns the cache.
                 updateScreenOffAnimationSetting();
                 return;
