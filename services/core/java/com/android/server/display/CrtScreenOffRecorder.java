@@ -19,10 +19,10 @@ package com.android.server.display;
 import java.io.PrintWriter;
 
 /**
- * Records CRT screen-off transitions for logcat and {@code dumpsys display}: counters, the last
- * path and outcome, and a bounded history that survives logcat rotation. Holds only enums, the
- * setting integer, the speed percent and duration, uptime, and counters. Called on the
- * DisplayPowerController handler thread.
+ * Records custom screen-off transitions (CRT and glitch effects) for logcat and
+ * {@code dumpsys display}: counters, the last path, effect, and outcome, and a bounded history
+ * that survives logcat rotation. Holds only enums, the setting integer, the speed percent and
+ * duration, uptime, and counters. Called on the DisplayPowerController handler thread.
  */
 final class CrtScreenOffRecorder {
     /** How a started CRT transition ended. */
@@ -35,6 +35,7 @@ final class CrtScreenOffRecorder {
     private int mHistoryCount;
     private boolean mRunning;
     private CrtScreenOffPolicy.Path mLastPath;
+    private ScreenOffEffect mLastEffect;
     private String mLastOutcome = "NONE";
     private int mLastSpeedPercent = -1;
     private long mLastDurationMs = -1;
@@ -52,17 +53,19 @@ final class CrtScreenOffRecorder {
         return mRunning && mLastPath == path;
     }
 
-    /** Marks a CRT transition as running at its effective speed and returns its log line. */
+    /** Marks an {@code effect} transition as running at its speed; returns its log line. */
     String started(long uptimeMillis, CrtScreenOffPolicy.Path path, int setting,
-            int speedPercent, long durationMs) {
+            ScreenOffEffect effect, int speedPercent, long durationMs) {
         mRunning = true;
         mLastPath = path;
+        mLastEffect = effect;
         mLastOutcome = "RUNNING";
         mLastSpeedPercent = speedPercent;
         mLastDurationMs = durationMs;
         mStarts++;
-        return remember(uptimeMillis, "start path=" + path + " setting=" + setting
-                + " speed=" + speedPercent + " durationMs=" + durationMs);
+        return remember(uptimeMillis, "start path=" + path + " effect=" + effect
+                + " setting=" + setting + " speed=" + speedPercent
+                + " durationMs=" + durationMs);
     }
 
     /** Ends the running transition; returns its log line, or null when none is running. */
@@ -94,6 +97,7 @@ final class CrtScreenOffRecorder {
         pw.println("  CrtScreenOffAnimation:");
         pw.println("    running=" + mRunning);
         pw.println("    lastPath=" + mLastPath);
+        pw.println("    lastEffect=" + (mLastEffect == null ? "NONE" : mLastEffect.name()));
         pw.println("    lastOutcome=" + mLastOutcome);
         pw.println("    lastSpeedPercent=" + mLastSpeedPercent);
         pw.println("    lastDurationMs=" + mLastDurationMs);

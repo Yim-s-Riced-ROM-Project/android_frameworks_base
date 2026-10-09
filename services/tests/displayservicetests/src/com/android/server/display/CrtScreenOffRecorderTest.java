@@ -37,8 +37,8 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void startThenComplete_logsBothAndCounts() {
-        assertEquals("start path=OFF setting=1 speed=100 durationMs=500",
-                mRecorder.started(10, Path.OFF, 1, 100, 500L));
+        assertEquals("start path=OFF effect=CRT setting=1 speed=100 durationMs=500",
+                mRecorder.started(10, Path.OFF, 1, ScreenOffEffect.CRT, 100, 500L));
         assertTrue(mRecorder.isRunning());
         assertEquals("end path=OFF outcome=COMPLETED",
                 mRecorder.ended(510, CrtScreenOffRecorder.Result.COMPLETED));
@@ -52,11 +52,25 @@ public class CrtScreenOffRecorderTest {
     @Test
     public void isRunning_path_matchesOnlyTheRunningPath() {
         assertFalse(mRecorder.isRunning(Path.DOZE));
-        mRecorder.started(0, Path.DOZE, 1, 100, 500L);
+        mRecorder.started(0, Path.DOZE, 1, ScreenOffEffect.CRT, 100, 500L);
         assertTrue(mRecorder.isRunning(Path.DOZE));
         assertFalse(mRecorder.isRunning(Path.OFF));
         mRecorder.ended(500, CrtScreenOffRecorder.Result.COMPLETED);
         assertFalse(mRecorder.isRunning(Path.DOZE));
+    }
+
+    @Test
+    public void glitchStart_logsEffectAndDumpsLastEffect() {
+        assertEquals("start path=DOZE effect=SIGNAL_LOSS setting=4 speed=50 durationMs=1200",
+                mRecorder.started(0, Path.DOZE, 4, ScreenOffEffect.SIGNAL_LOSS, 50, 1200L));
+        String dump = dump();
+        assertTrue(dump, dump.contains("lastEffect=SIGNAL_LOSS\n"));
+        assertTrue(dump, dump.contains("lastDurationMs=1200\n"));
+    }
+
+    @Test
+    public void dump_beforeAnyStart_reportsNoEffect() {
+        assertTrue(dump().contains("lastEffect=NONE\n"));
     }
 
     @Test
@@ -67,7 +81,7 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void wakeCancel_isRecordedOnce() {
-        mRecorder.started(0, Path.DOZE, 1, 100, 500L);
+        mRecorder.started(0, Path.DOZE, 1, ScreenOffEffect.CRT, 100, 500L);
         assertEquals("end path=DOZE outcome=CANCELLED_WAKE",
                 mRecorder.ended(100, CrtScreenOffRecorder.Result.CANCELLED_WAKE));
         assertNull(mRecorder.ended(200, CrtScreenOffRecorder.Result.COMPLETED));
@@ -85,8 +99,8 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void started_recordsSpeedAndDuration() {
-        assertEquals("start path=DOZE setting=1 speed=50 durationMs=1000",
-                mRecorder.started(0, Path.DOZE, 1, 50, 1000L));
+        assertEquals("start path=DOZE effect=CRT setting=1 speed=50 durationMs=1000",
+                mRecorder.started(0, Path.DOZE, 1, ScreenOffEffect.CRT, 50, 1000L));
         String dump = dump();
         assertTrue(dump, dump.contains("lastSpeedPercent=50"));
         assertTrue(dump, dump.contains("lastDurationMs=1000"));
