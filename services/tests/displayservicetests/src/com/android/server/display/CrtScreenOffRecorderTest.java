@@ -37,7 +37,8 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void startThenComplete_logsBothAndCounts() {
-        assertEquals("start path=OFF setting=1", mRecorder.started(10, Path.OFF, 1));
+        assertEquals("start path=OFF setting=1 speed=100 durationMs=500",
+                mRecorder.started(10, Path.OFF, 1, 100, 500L));
         assertTrue(mRecorder.isRunning());
         assertEquals("end path=OFF outcome=COMPLETED",
                 mRecorder.ended(510, CrtScreenOffRecorder.Result.COMPLETED));
@@ -51,7 +52,7 @@ public class CrtScreenOffRecorderTest {
     @Test
     public void isRunning_path_matchesOnlyTheRunningPath() {
         assertFalse(mRecorder.isRunning(Path.DOZE));
-        mRecorder.started(0, Path.DOZE, 1);
+        mRecorder.started(0, Path.DOZE, 1, 100, 500L);
         assertTrue(mRecorder.isRunning(Path.DOZE));
         assertFalse(mRecorder.isRunning(Path.OFF));
         mRecorder.ended(500, CrtScreenOffRecorder.Result.COMPLETED);
@@ -66,7 +67,7 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void wakeCancel_isRecordedOnce() {
-        mRecorder.started(0, Path.DOZE, 1);
+        mRecorder.started(0, Path.DOZE, 1, 100, 500L);
         assertEquals("end path=DOZE outcome=CANCELLED_WAKE",
                 mRecorder.ended(100, CrtScreenOffRecorder.Result.CANCELLED_WAKE));
         assertNull(mRecorder.ended(200, CrtScreenOffRecorder.Result.COMPLETED));
@@ -83,11 +84,27 @@ public class CrtScreenOffRecorderTest {
     }
 
     @Test
+    public void started_recordsSpeedAndDuration() {
+        assertEquals("start path=DOZE setting=1 speed=50 durationMs=1000",
+                mRecorder.started(0, Path.DOZE, 1, 50, 1000L));
+        String dump = dump();
+        assertTrue(dump, dump.contains("lastSpeedPercent=50"));
+        assertTrue(dump, dump.contains("lastDurationMs=1000"));
+    }
+
+    @Test
+    public void dump_beforeAnyStart_reportsNoSpeed() {
+        String dump = dump();
+        assertTrue(dump, dump.contains("lastSpeedPercent=-1"));
+        assertTrue(dump, dump.contains("lastDurationMs=-1"));
+    }
+
+    @Test
     public void dump_listsEveryKey() {
         String dump = dump();
         for (String key : new String[] {"CrtScreenOffAnimation:", "running=", "lastPath=",
-                "lastOutcome=", "starts=", "completions=", "cancellations=", "fallbacks=",
-                "history:"}) {
+                "lastOutcome=", "lastSpeedPercent=", "lastDurationMs=", "starts=",
+                "completions=", "cancellations=", "fallbacks=", "history:"}) {
             assertTrue(key, dump.contains(key));
         }
     }
