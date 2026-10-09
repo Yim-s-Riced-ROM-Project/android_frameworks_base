@@ -34,6 +34,7 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doNothing
 import org.mockito.kotlin.doThrow
+import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
@@ -111,6 +112,18 @@ class PulseWindowControllerTest : SysuiTestCase() {
 
         verify(view, times(1)).clear()
         verify(windowManager, times(1)).removeViewImmediate(view)
+    }
+
+    @Test
+    fun hide_stopsColorAnimationBeforeRemovingWindow() {
+        underTest.show(48)
+
+        underTest.hide()
+
+        inOrder(view, windowManager) {
+            verify(view).setColorMode(PulseColorMode.SOLID)
+            verify(windowManager).removeViewImmediate(view)
+        }
     }
 
     @Test

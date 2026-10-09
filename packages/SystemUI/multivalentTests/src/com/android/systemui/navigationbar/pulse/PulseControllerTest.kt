@@ -944,6 +944,70 @@ class PulseControllerTest {
     }
 
     @Test
+    fun showOverlay_forwardsColorMode() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.RAINBOW_GRADIENT)
+
+        showOverlay()
+
+        verify(windowController).setColor(0xD9FFFFFF.toInt())
+        inOrder(windowController) {
+            verify(windowController).setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+            verify(windowController).show(any())
+        }
+    }
+
+    @Test
+    fun rainbowModeChange_appliesLiveWithoutRestartingCapture() {
+        showOverlay()
+        val epochBefore = dumpValue("captureEpoch")
+
+        settings.value = settings.value.copy(colorMode = PulseColorMode.RAINBOW_CYCLE)
+        runMain()
+        settings.value = settings.value.copy(colorMode = PulseColorMode.RAINBOW_GRADIENT)
+        runMain()
+
+        inOrder(windowController) {
+            verify(windowController).setColorMode(PulseColorMode.RAINBOW_CYCLE)
+            verify(windowController).setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+        }
+        assertThat(dumpValue("captureEpoch")).isEqualTo(epochBefore)
+        assertThat(capture.requestedSessions).hasSize(1)
+        assertThat(capture.stopCount).isEqualTo(0)
+        verify(windowController, never()).hide()
+    }
+
+    @Test
+    fun rainbowModeChangeWhileHidden_appliesOnNextShow() {
+        playback.value = PulsePlaybackTarget(active = false, sessionId = SESSION)
+        activateHost(PulseHost.NAVIGATION_BAR)
+        startController()
+
+        settings.value = settings.value.copy(colorMode = PulseColorMode.RAINBOW_CYCLE)
+        runMain()
+        verify(windowController, never()).setColorMode(any())
+
+        playback.value = PulsePlaybackTarget(active = true, sessionId = SESSION)
+        runMain()
+        makeReady()
+
+        verify(windowController).setColorMode(PulseColorMode.RAINBOW_CYCLE)
+    }
+
+    @Test
+    fun dump_reportsColorAnimatingOnlyWhileRainbowOverlayShown() {
+        settings.value = settings.value.copy(colorMode = PulseColorMode.RAINBOW_CYCLE)
+        startController()
+        assertThat(dumpValue("colorAnimating")).isEqualTo("false")
+
+        showOverlay()
+        assertThat(dumpValue("colorAnimating")).isEqualTo("true")
+
+        settings.value = settings.value.copy(colorMode = PulseColorMode.SOLID)
+        runMain()
+        assertThat(dumpValue("colorAnimating")).isEqualTo("false")
+    }
+
+    @Test
     fun logBuffer_recordsThemeAndColorModeTransitionsOnce() {
         showOverlay()
         val before = logMessages().size
@@ -1130,6 +1194,7 @@ class PulseControllerTest {
                 "colorMode",
                 "nightMode",
                 "effectiveColor",
+                "colorAnimating",
                 "boost",
                 "barCount",
                 "barGapPercent",

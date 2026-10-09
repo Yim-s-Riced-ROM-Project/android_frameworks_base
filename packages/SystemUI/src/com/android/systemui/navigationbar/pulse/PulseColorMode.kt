@@ -21,21 +21,47 @@ package com.android.systemui.navigationbar.pulse
  *
  * Kept free of Android types so the color decision is testable on a plain JVM.
  */
-enum class PulseColorMode(val value: Int) {
+enum class PulseColorMode(val value: Int, val animated: Boolean = false) {
     /** The user's stored RGB. The default, and the only behavior before the setting existed. */
     SOLID(0),
 
     /** White bars with the system dark theme on, black bars with it off. */
-    MATCH_THEME(1);
+    MATCH_THEME(1),
 
-    /** The bar color with [alpha] in the top byte, ready for [android.graphics.Paint.setColor]. */
+    /** Each bar its own hue across the spectrum; the hues drift over time. See [PulseRainbow]. */
+    RAINBOW_GRADIENT(2, animated = true),
+
+    /** All bars share one hue that cycles through the spectrum. See [PulseRainbow]. */
+    RAINBOW_CYCLE(3, animated = true);
+
+    /**
+     * The bar color with [alpha] in the top byte, ready for [android.graphics.Paint.setColor].
+     * Animated modes return white: [PulseView] replaces the RGB per frame and keeps the alpha.
+     */
     fun resolveArgb(rgb: Int, alpha: Int, nightMode: Boolean): Int {
         val baseRgb =
             when (this) {
                 SOLID -> rgb
                 MATCH_THEME -> if (nightMode) WHITE_RGB else BLACK_RGB
+                RAINBOW_GRADIENT,
+                RAINBOW_CYCLE -> WHITE_RGB
             }
         return (alpha shl 24) or (baseRgb and RGB_MASK)
+    }
+
+    /**
+     * The color of bar [index] of [count] at [timeMs], given the [resolvedArgb] from
+     * [resolveArgb]. Static modes return [resolvedArgb] unchanged; animated modes keep only its
+     * alpha. Called per bar in [PulseView.onDraw], so it must not allocate.
+     */
+    fun barArgb(resolvedArgb: Int, timeMs: Long, index: Int, count: Int): Int {
+        val alpha = resolvedArgb ushr 24
+        return when (this) {
+            SOLID,
+            MATCH_THEME -> resolvedArgb
+            RAINBOW_GRADIENT -> PulseRainbow.gradientArgb(timeMs, index, count, alpha)
+            RAINBOW_CYCLE -> PulseRainbow.cycleArgb(timeMs, alpha)
+        }
     }
 
     companion object {

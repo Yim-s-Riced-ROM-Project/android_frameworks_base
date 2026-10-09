@@ -31,9 +31,12 @@ import org.mockito.ArgumentMatchers.anyFloat
 import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.whenever
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
@@ -185,6 +188,99 @@ class PulseViewTest : SysuiTestCase() {
 
         view.setBarLayout(count = 16, gapPercent = 50)
         assertThat(view.effectiveBarGapPx).isWithin(1e-4f).of(10f)
+    }
+
+    @Test
+    fun draw_rainbowGradient_givesEachBarItsOwnHueWithConfiguredAlpha() {
+        val view = PulseView(mContext)
+        view.setColor(Color.argb(0x80, 0xFF, 0xFF, 0xFF))
+        view.setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+
+        val colors = drawnColors(view, barCount = 16)
+
+        assertThat(colors).hasSize(16)
+        assertThat(colors.toSet()).hasSize(16)
+        assertThat(colors.map { it ushr 24 }.toSet()).containsExactly(0x80)
+    }
+
+    @Test
+    fun draw_rainbowCycle_sharesOneColorAcrossBars() {
+        val view = PulseView(mContext)
+        view.setColor(Color.argb(0x80, 0xFF, 0xFF, 0xFF))
+        view.setColorMode(PulseColorMode.RAINBOW_CYCLE)
+
+        val colors = drawnColors(view, barCount = 16)
+
+        assertThat(colors).hasSize(16)
+        assertThat(colors.toSet()).hasSize(1)
+        assertThat(colors.first() ushr 24).isEqualTo(0x80)
+    }
+
+    @Test
+    fun setColorMode_backToSolid_restoresConfiguredArgb() {
+        val view = PulseView(mContext)
+        view.setColor(Color.argb(0x80, 0x12, 0x34, 0x56))
+        view.setColorMode(PulseColorMode.RAINBOW_CYCLE)
+        view.setColorMode(PulseColorMode.SOLID)
+
+        val colors = drawnColors(view, barCount = 16)
+
+        assertThat(colors.toSet()).containsExactly(Color.argb(0x80, 0x12, 0x34, 0x56))
+    }
+
+    @Test
+    fun draw_animatedMode_requestsNextFrame() {
+        val view = spy(PulseView(mContext))
+        view.layout(0, 0, 320, 100)
+        view.setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+        view.setLevels(floatArrayOf(1f))
+        clearInvocations(view)
+
+        view.draw(mock(Canvas::class.java))
+
+        verify(view).postInvalidateOnAnimation()
+    }
+
+    @Test
+    fun draw_animatedModeWithNoBars_doesNotRequestNextFrame() {
+        val view = spy(PulseView(mContext))
+        view.layout(0, 0, 320, 100)
+        view.setColorMode(PulseColorMode.RAINBOW_CYCLE)
+        view.clear()
+        clearInvocations(view)
+
+        view.draw(mock(Canvas::class.java))
+
+        verify(view, never()).postInvalidateOnAnimation()
+    }
+
+    @Test
+    fun draw_staticMode_doesNotRequestNextFrame() {
+        val view = spy(PulseView(mContext))
+        view.layout(0, 0, 320, 100)
+        view.setColorMode(PulseColorMode.MATCH_THEME)
+        view.setLevels(floatArrayOf(1f))
+        clearInvocations(view)
+
+        view.draw(mock(Canvas::class.java))
+
+        verify(view, never()).postInvalidateOnAnimation()
+    }
+
+    /** Draws full levels and records the paint color at each drawRect, since Paint is reused. */
+    private fun drawnColors(view: PulseView, barCount: Int): List<Int> {
+        val canvas = mock(Canvas::class.java)
+        val colors = mutableListOf<Int>()
+        doAnswer { colors += it.getArgument<Paint>(4).color }
+            .whenever(canvas)
+            .drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
+        view.layout(0, 0, 320, 100)
+        view.setBarLayout(count = barCount, gapPercent = 30)
+        view.setLevels(FloatArray(PulseSpectrumProcessor.BAND_COUNT) { 1f })
+
+        view.draw(canvas)
+
+        return colors
     }
 
     private fun drawnTop(level: Float, boost: Int? = null): Float {
