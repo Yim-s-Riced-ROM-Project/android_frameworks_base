@@ -284,7 +284,7 @@ final class ColorFade {
 
         if (!(createEglContext(isProtected) && createEglSurface(isProtected, isWideColor)
                 && setScreenshotTextureAndSetViewport(hardwareBuffer, displayInfo.rotation))) {
-            dismiss();
+            releaseFailedPrepare();
             return false;
         }
 
@@ -295,7 +295,7 @@ final class ColorFade {
         try {
             if (!initGLShaders(context) || !initGLBuffers() || checkGlErrors("prepare")) {
                 detachEglContext();
-                dismiss();
+                releaseFailedPrepare();
                 return false;
             }
         } finally {
@@ -320,6 +320,24 @@ final class ColorFade {
             }
         }
         return true;
+    }
+
+    /**
+     * Dismisses after a prepare that failed before {@link #mCreatedResources} was set. Without
+     * this, {@link #dismiss} keeps the EGL surface bound to the destroyed window and the
+     * screenshot texture, and the next prepare reuses that dead surface. A glitch shader that
+     * fails on the device reaches this path, then DisplayPowerController prepares the stock fade.
+     */
+    private void releaseFailedPrepare() {
+        if (attachEglContext()) {
+            try {
+                destroyScreenshotTexture();
+            } finally {
+                detachEglContext();
+            }
+        }
+        destroyEglSurface();
+        dismiss();
     }
 
     private String readFile(Context context, int resourceId) {
