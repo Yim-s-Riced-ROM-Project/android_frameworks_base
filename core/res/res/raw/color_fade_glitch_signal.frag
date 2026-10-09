@@ -55,7 +55,8 @@ void main() {
     if (hash(vec2(band, tick)) < share) {
         sh += (hash(vec2(band, tick + 0.5)) - 0.5) * intensity * 320.0 * u;
     }
-    float y = mod(gP.y + roll * resolution.y, resolution.y);
+    // Subtract: gl_FragCoord counts y from the bottom, so this rolls the picture upward.
+    float y = mod(gP.y - roll * resolution.y, resolution.y);
     vec3 c = splitFetch(vec2(gP.x - sh, y), split * resolution.x);
     float n = hash(floor(gP / (4.0 * u)) + vec2(tick * 7.0, tick * 13.0));
     c = mix(c, 1.0 - (1.0 - c) * (1.0 - n), staticAmount);

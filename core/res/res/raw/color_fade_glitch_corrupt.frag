@@ -51,7 +51,7 @@ void main() {
     float b = 48.0 * u;
     vec2 cell = floor(gP / b);
     vec2 grid = max(floor(resolution / b), vec2(1.0));
-    vec3 c = splitFetch(gP, split * resolution.x);
+    vec3 c;
     if (hash(cell + vec2(tick * 31.0, tick * 17.0)) < share) {
         vec2 local = gP - cell * b;
         float hx = hash(cell + vec2(tick, 101.0));
@@ -67,8 +67,11 @@ void main() {
         } else if (mode < 0.8) {
             c = fetch(src * b + local).rgb;
         } else {
-            c = fetch(src * b + vec2(local.x, u)).rgb;
+            // Smear the block's top row (gl_FragCoord counts y from the bottom).
+            c = fetch(src * b + vec2(local.x, b - u)).rgb;
         }
+    } else {
+        c = splitFetch(gP, split * resolution.x);
     }
     if (hash(cell + vec2(9090.0, 9090.0)) < dark) {
         c = vec3(0.0);
