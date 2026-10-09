@@ -48,11 +48,25 @@ public class CrtScreenOffPolicyTest {
     }
 
     @Test
-    public void anyValueOtherThanCrt_isStock() {
+    public void stockAndUnknownValues_areStock() {
         assertEquals(Decision.STOCK_SELECTED,
                 decide(SETTING_STOCK, true, true, true, true));
-        assertEquals(Decision.STOCK_SELECTED, decide(2, true, true, true, true));
+        assertEquals(Decision.STOCK_SELECTED, decide(5, true, true, true, true));
         assertEquals(Decision.STOCK_SELECTED, decide(-1, true, true, true, true));
+    }
+
+    @Test
+    public void glitchValues_eligible_playTheEffect() {
+        assertEquals(Decision.CRT, decide(2, true, true, true, true));
+        assertEquals(Decision.CRT, decide(3, true, true, true, true));
+        assertEquals(Decision.CRT, decide(4, true, true, true, true));
+    }
+
+    @Test
+    public void glitchValues_useTheSameFallbackGates() {
+        assertEquals(Decision.NOT_DEFAULT_DISPLAY, decide(2, false, true, true, true));
+        assertEquals(Decision.COLOR_FADE_DISABLED, decide(3, true, false, true, true));
+        assertEquals(Decision.DISPLAY_NOT_ON, decide(4, true, true, true, false));
     }
 
     @Test
