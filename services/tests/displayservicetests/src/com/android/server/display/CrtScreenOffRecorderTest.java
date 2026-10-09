@@ -74,6 +74,16 @@ public class CrtScreenOffRecorderTest {
     }
 
     @Test
+    public void fallback_afterAnotherEffect_reportsTheFallingBackEffect() {
+        mRecorder.started(0, Path.OFF, 1, ScreenOffEffect.CRT, 100, 500L);
+        mRecorder.ended(500, CrtScreenOffRecorder.Result.COMPLETED);
+
+        assertEquals("end path=OFF outcome=FALLBACK:PREPARE_FAILED effect=TEAR setting=2",
+                mRecorder.fallback(900, Path.OFF, 2, Decision.PREPARE_FAILED));
+        assertTrue(dump().contains("lastEffect=TEAR\n"));
+    }
+
+    @Test
     public void endWithoutStart_isNoOp() {
         assertNull(mRecorder.ended(1, CrtScreenOffRecorder.Result.COMPLETED));
         assertTrue(dump().contains("completions=0"));
@@ -90,7 +100,7 @@ public class CrtScreenOffRecorderTest {
 
     @Test
     public void fallback_namesReason() {
-        assertEquals("end path=OFF outcome=FALLBACK:PREPARE_FAILED setting=1",
+        assertEquals("end path=OFF outcome=FALLBACK:PREPARE_FAILED effect=CRT setting=1",
                 mRecorder.fallback(5, Path.OFF, 1, Decision.PREPARE_FAILED));
         String dump = dump();
         assertTrue(dump, dump.contains("lastOutcome=FALLBACK:PREPARE_FAILED"));

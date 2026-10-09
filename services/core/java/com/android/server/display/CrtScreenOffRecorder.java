@@ -87,10 +87,11 @@ final class CrtScreenOffRecorder {
     String fallback(long uptimeMillis, CrtScreenOffPolicy.Path path, int setting,
             CrtScreenOffPolicy.Decision reason) {
         mLastPath = path;
+        mLastEffect = ScreenOffEffect.from(setting);
         mLastOutcome = "FALLBACK:" + reason;
         mFallbacks++;
-        return remember(uptimeMillis,
-                "end path=" + path + " outcome=" + mLastOutcome + " setting=" + setting);
+        return remember(uptimeMillis, "end path=" + path + " outcome=" + mLastOutcome
+                + " effect=" + mLastEffect + " setting=" + setting);
     }
 
     void dump(PrintWriter pw) {
