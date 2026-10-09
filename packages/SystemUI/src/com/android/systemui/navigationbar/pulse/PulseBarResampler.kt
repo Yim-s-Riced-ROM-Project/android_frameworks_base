@@ -27,7 +27,7 @@ package com.android.systemui.navigationbar.pulse
  * Kept free of Android types so it tests on a plain JVM. [resample] allocates nothing, which keeps
  * it safe inside `onDraw`.
  */
-internal object PulseBarResampler {
+object PulseBarResampler {
     /** Writes one level per element of [bars] from [bands]. An empty [bands] clears [bars]. */
     fun resample(bands: FloatArray, bars: FloatArray) {
         when {
