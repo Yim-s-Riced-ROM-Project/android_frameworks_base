@@ -19,9 +19,10 @@ package com.android.server.display;
 /**
  * Decides once per awake period whether the CRT screen-off plays at a doze entry.
  *
- * <p>It arms when the screen turns on for an awake user. The first update under any non-awake
- * policy always disarms it, and plays only when that update is a doze request with the screen still
- * ON and unfaded. SystemUI can hold {@code STATE_ON} under {@code POLICY_DOZE} for seconds while it
+ * <p>It arms when the screen turns on for an awake user. DisplayPowerController consults it on
+ * every ON, DOZE, and DOZE_SUSPEND target update, and the screen-off branch disarms it. The first
+ * such update under a non-awake policy disarms it, and plays only when that update is a doze
+ * request with the screen still ON and unfaded. SystemUI can hold {@code STATE_ON} under {@code POLICY_DOZE} for seconds while it
  * animates the lockscreen into AOD, so CRT must start at the lock or not at all: a later doze
  * update finds the gate disarmed and never plays over AOD that is already showing. Pure Java;
  * called on the DisplayPowerController handler thread.
