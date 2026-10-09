@@ -21,9 +21,15 @@ import org.junit.Test
 
 class PulseColorModeTest {
     @Test
-    fun fromSetting_onlyOneIsMatchTheme() {
+    fun fromSetting_mapsEachStoredValue() {
         assertThat(PulseColorMode.fromSetting(1)).isEqualTo(PulseColorMode.MATCH_THEME)
-        for (raw in listOf(0, 2, -1, 99, Int.MIN_VALUE)) {
+        assertThat(PulseColorMode.fromSetting(2)).isEqualTo(PulseColorMode.RAINBOW_GRADIENT)
+        assertThat(PulseColorMode.fromSetting(3)).isEqualTo(PulseColorMode.RAINBOW_CYCLE)
+    }
+
+    @Test
+    fun fromSetting_unknownValuesAreSolid() {
+        for (raw in listOf(0, 4, -1, 99, Int.MIN_VALUE)) {
             assertThat(PulseColorMode.fromSetting(raw)).isEqualTo(PulseColorMode.SOLID)
         }
     }
@@ -52,5 +58,51 @@ class PulseColorModeTest {
     fun resolveArgb_masksStoredRgbToLower24Bits() {
         assertThat(PulseColorMode.SOLID.resolveArgb(0xAB123456.toInt(), 255, nightMode = false))
             .isEqualTo(0xFF123456.toInt())
+    }
+
+    @Test
+    fun animated_onlyForRainbowModes() {
+        assertThat(PulseColorMode.SOLID.animated).isFalse()
+        assertThat(PulseColorMode.MATCH_THEME.animated).isFalse()
+        assertThat(PulseColorMode.RAINBOW_GRADIENT.animated).isTrue()
+        assertThat(PulseColorMode.RAINBOW_CYCLE.animated).isTrue()
+    }
+
+    @Test
+    fun rainbowModes_resolveToWhiteBaseWithStoredAlpha() {
+        for (mode in listOf(PulseColorMode.RAINBOW_GRADIENT, PulseColorMode.RAINBOW_CYCLE)) {
+            assertThat(mode.resolveArgb(0x123456, 0x80, nightMode = false))
+                .isEqualTo(0x80FFFFFF.toInt())
+        }
+    }
+
+    @Test
+    fun barArgb_staticModesReturnResolvedColorAtAnyTime() {
+        for (mode in listOf(PulseColorMode.SOLID, PulseColorMode.MATCH_THEME)) {
+            for (timeMs in listOf(0L, 1_234L, 99_999L)) {
+                assertThat(mode.barArgb(0x80123456.toInt(), timeMs, index = 7, count = 32))
+                    .isEqualTo(0x80123456.toInt())
+            }
+        }
+    }
+
+    @Test
+    fun barArgb_rainbowGradientUsesPerBarHueAndResolvedAlpha() {
+        val mode = PulseColorMode.RAINBOW_GRADIENT
+
+        assertThat(mode.barArgb(0x80FFFFFF.toInt(), 1_000L, index = 3, count = 16))
+            .isEqualTo(PulseRainbow.gradientArgb(1_000L, 3, 16, 0x80))
+        assertThat(mode.barArgb(0x80FFFFFF.toInt(), 1_000L, index = 0, count = 16))
+            .isNotEqualTo(mode.barArgb(0x80FFFFFF.toInt(), 1_000L, index = 8, count = 16))
+    }
+
+    @Test
+    fun barArgb_rainbowCycleSharesOneColorAcrossBars() {
+        val mode = PulseColorMode.RAINBOW_CYCLE
+
+        for (index in 0 until 32) {
+            assertThat(mode.barArgb(0x40FFFFFF, 2_000L, index, count = 32))
+                .isEqualTo(PulseRainbow.cycleArgb(2_000L, 0x40))
+        }
     }
 }

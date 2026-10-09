@@ -45,6 +45,9 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     private var barRight = FloatArray(PulseSettingsRepository.DEFAULT_BAR_COUNT)
     private var barGapPercent = PulseSettingsRepository.DEFAULT_BAR_GAP_PERCENT
     private val heightCurve = PulseHeightCurve()
+    // Main-thread only. The resolved color is kept apart from paint, which animated modes overwrite.
+    private var resolvedArgb = Color.WHITE
+    private var colorMode = PulseColorMode.SOLID
 
     /** The gap between bars in pixels after [PulseBarGeometry]'s 1 px rule; 0 before sizing. */
     var effectiveBarGapPx = 0f
@@ -65,9 +68,24 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
         postInvalidateOnAnimation()
     }
 
-    /** Sets the bar color, including its alpha. Called on setting changes, never per frame. */
+    /**
+     * Sets the bar color from [PulseColorMode.resolveArgb], including its alpha. Called on setting
+     * changes, never per frame.
+     */
     fun setColor(argb: Int) {
+        resolvedArgb = argb
         paint.color = argb
+        postInvalidateOnAnimation()
+    }
+
+    /**
+     * Sets how bars are colored. An animated mode redraws on every frame while this view is
+     * attached; detaching it (hiding Pulse) stops the redraws. Called on setting changes only.
+     */
+    fun setColorMode(mode: PulseColorMode) {
+        if (mode == colorMode) return
+        colorMode = mode
+        paint.color = resolvedArgb
         postInvalidateOnAnimation()
     }
 
@@ -119,10 +137,15 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
         PulseBarResampler.resample(drawBands, drawLevels)
 
         val bottom = height.toFloat()
+        // The frame's vsync-aligned time, so every bar in one frame shares a clock.
+        val timeMs = drawingTime
         for (index in drawLevels.indices) {
             val level = heightCurve.heightFor(drawLevels[index])
             if (level <= 0f) continue
+            paint.color = colorMode.barArgb(resolvedArgb, timeMs, index, drawLevels.size)
             canvas.drawRect(barLeft[index], bottom * (1f - level), barRight[index], bottom, paint)
         }
+        // Keeps the color clock running between FFT frames. A detached view gets no frames.
+        if (colorMode.animated) postInvalidateOnAnimation()
     }
 }

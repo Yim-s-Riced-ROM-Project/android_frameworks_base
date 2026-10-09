@@ -84,6 +84,8 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
 
     fun setColor(argb: Int) = view.setColor(argb)
 
+    fun setColorMode(mode: PulseColorMode) = view.setColorMode(mode)
+
     fun setBoost(strength: Int) = view.setBoost(strength)
 
     fun setBarLayout(count: Int, gapPercent: Int) = view.setBarLayout(count, gapPercent)

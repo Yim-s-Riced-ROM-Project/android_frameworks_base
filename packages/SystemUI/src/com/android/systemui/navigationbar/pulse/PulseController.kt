@@ -272,6 +272,7 @@ constructor(
         }
         if (!overlayShown) return
         if (barLayoutChanged) windowController.setBarLayout(next.barCount, next.barGapPercent)
+        if (next.colorMode != previous.colorMode) windowController.setColorMode(next.colorMode)
         val argb = next.argb(nightMode)
         if (argb != previous.argb(nightMode)) windowController.setColor(argb)
         if (next.boost != previous.boost) windowController.setBoost(next.boost)
@@ -376,6 +377,8 @@ constructor(
         pw.println("colorMode=${config.colorMode}")
         pw.println("nightMode=$nightMode")
         pw.println("effectiveColor=#%08X".format(config.argb(nightMode)))
+        // True only while the overlay is shown in an animated mode: the view redraws every frame.
+        pw.println("colorAnimating=${overlayShown && config.colorMode.animated}")
         pw.println("boost=${config.boost}")
         pw.println("barCount=${config.barCount}")
         pw.println("barGapPercent=${config.barGapPercent}")
@@ -464,6 +467,7 @@ constructor(
 
     private fun showOverlay(epoch: Int, levels: FloatArray) {
         windowController.setColor(config.argb(nightMode))
+        windowController.setColorMode(config.colorMode)
         windowController.setBoost(config.boost)
         windowController.setBarLayout(config.barCount, config.barGapPercent)
         windowController.setLevels(levels)
