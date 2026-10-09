@@ -276,7 +276,7 @@ class PulseViewTest : SysuiTestCase() {
             .drawRect(anyFloat(), anyFloat(), anyFloat(), anyFloat(), any())
         view.layout(0, 0, 320, 100)
         view.setBarLayout(count = barCount, gapPercent = 30)
-        view.setLevels(FloatArray(PulseSpectrumProcessor.BAND_COUNT) { 1f })
+        view.setLevels(FloatArray(32) { 1f })
 
         view.draw(canvas)
 
