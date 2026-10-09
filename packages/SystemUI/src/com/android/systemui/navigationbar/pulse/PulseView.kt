@@ -45,7 +45,7 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
     private var barRight = FloatArray(PulseSettingsRepository.DEFAULT_BAR_COUNT)
     private var barGapPercent = PulseSettingsRepository.DEFAULT_BAR_GAP_PERCENT
     private val heightCurve = PulseHeightCurve()
-    // Main-thread only. The resolved color is kept apart from paint, which animated modes overwrite.
+    // Main-thread only. Kept apart from paint, whose color animated modes overwrite per bar.
     private var resolvedArgb = Color.WHITE
     private var colorMode = PulseColorMode.SOLID
 
@@ -139,13 +139,16 @@ class PulseView @Inject constructor(@param:DisplayAware context: Context) : View
         val bottom = height.toFloat()
         // The frame's vsync-aligned time, so every bar in one frame shares a clock.
         val timeMs = drawingTime
+        var drewBar = false
         for (index in drawLevels.indices) {
             val level = heightCurve.heightFor(drawLevels[index])
             if (level <= 0f) continue
             paint.color = colorMode.barArgb(resolvedArgb, timeMs, index, drawLevels.size)
             canvas.drawRect(barLeft[index], bottom * (1f - level), barRight[index], bottom, paint)
+            drewBar = true
         }
-        // Keeps the color clock running between FFT frames. A detached view gets no frames.
-        if (colorMode.animated) postInvalidateOnAnimation()
+        // Keeps the color clock running between FFT frames while bars are visible. Silence and a
+        // detached view both end the loop; the next setLevels restarts it.
+        if (colorMode.animated && drewBar) postInvalidateOnAnimation()
     }
 }

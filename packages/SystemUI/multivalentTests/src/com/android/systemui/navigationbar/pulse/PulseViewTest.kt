@@ -233,6 +233,7 @@ class PulseViewTest : SysuiTestCase() {
         val view = spy(PulseView(mContext))
         view.layout(0, 0, 320, 100)
         view.setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+        view.setLevels(floatArrayOf(1f))
         clearInvocations(view)
 
         view.draw(mock(Canvas::class.java))
@@ -241,10 +242,24 @@ class PulseViewTest : SysuiTestCase() {
     }
 
     @Test
+    fun draw_animatedModeWithNoBars_doesNotRequestNextFrame() {
+        val view = spy(PulseView(mContext))
+        view.layout(0, 0, 320, 100)
+        view.setColorMode(PulseColorMode.RAINBOW_CYCLE)
+        view.clear()
+        clearInvocations(view)
+
+        view.draw(mock(Canvas::class.java))
+
+        verify(view, never()).postInvalidateOnAnimation()
+    }
+
+    @Test
     fun draw_staticMode_doesNotRequestNextFrame() {
         val view = spy(PulseView(mContext))
         view.layout(0, 0, 320, 100)
         view.setColorMode(PulseColorMode.MATCH_THEME)
+        view.setLevels(floatArrayOf(1f))
         clearInvocations(view)
 
         view.draw(mock(Canvas::class.java))

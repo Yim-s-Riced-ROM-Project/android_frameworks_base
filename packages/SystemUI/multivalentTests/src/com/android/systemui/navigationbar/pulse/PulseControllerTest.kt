@@ -949,8 +949,11 @@ class PulseControllerTest {
 
         showOverlay()
 
-        verify(windowController).setColorMode(PulseColorMode.RAINBOW_GRADIENT)
         verify(windowController).setColor(0xD9FFFFFF.toInt())
+        inOrder(windowController) {
+            verify(windowController).setColorMode(PulseColorMode.RAINBOW_GRADIENT)
+            verify(windowController).show(any())
+        }
     }
 
     @Test

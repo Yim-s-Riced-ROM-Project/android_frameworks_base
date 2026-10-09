@@ -100,6 +100,8 @@ constructor(@param:DisplayAware private val context: Context, private val view: 
 
     fun hide() {
         if (!attached) return
+        // Ends the Rainbow redraw loop even if removal fails below; show() sets the mode again.
+        view.setColorMode(PulseColorMode.SOLID)
         view.clear()
         try {
             windowManager.removeViewImmediate(view)
