@@ -23,7 +23,7 @@ package com.android.systemui.navigationbar.pulse
  * allocate. Kept free of Android types (unlike `Color.HSVToColor`) so it is testable on a plain
  * JVM.
  */
-internal object PulseRainbow {
+object PulseRainbow {
     /** How long Rainbow cycle takes to pass through every hue once. */
     const val CYCLE_PERIOD_MS = 6_000L
 

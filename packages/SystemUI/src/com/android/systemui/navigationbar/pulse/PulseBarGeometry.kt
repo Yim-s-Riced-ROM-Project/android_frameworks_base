@@ -26,7 +26,7 @@ package com.android.systemui.navigationbar.pulse
  *
  * Kept free of Android types so it tests on a plain JVM.
  */
-internal object PulseBarGeometry {
+object PulseBarGeometry {
     const val MIN_BAR_WIDTH_PX = 1f
 
     /**
