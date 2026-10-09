@@ -502,8 +502,11 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
     // CRT screen-off animation: setting cache (handler thread) and transition record.
     private int mScreenOffAnimationSetting = CrtScreenOffPolicy.SETTING_STOCK;
-    // True from an awake screen-on until the next doze decision or screen-off.
-    private boolean mCrtArmedForDoze;
+    // Decides once per awake period whether CRT plays at the doze entry.
+    private final CrtDozeEntryGate mCrtDozeEntryGate = new CrtDozeEntryGate();
+    // Set when a DOZE-path CRT completes: the next brightness change jumps instead of ramping,
+    // so the revealed AOD never starts at the awake brightness and dims.
+    private boolean mCrtJumpBrightnessOnReveal;
     // config_skipScreenOffTransition; also gates CRT before doze.
     private final boolean mSkipScreenOffTransitionConfig;
     private final CrtScreenOffRecorder mCrtRecorder = new CrtScreenOffRecorder();
@@ -1303,8 +1306,13 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
         @Override
         public void onAnimationEnd(Animator animation) {
-            logCrt(mCrtRecorder.ended(mClock.uptimeMillis(),
-                    CrtScreenOffRecorder.Result.COMPLETED));
+            final boolean dozeCrt = mCrtRecorder.isRunning(CrtScreenOffPolicy.Path.DOZE);
+            final String line = mCrtRecorder.ended(mClock.uptimeMillis(),
+                    CrtScreenOffRecorder.Result.COMPLETED);
+            if (line != null) {
+                logCrt(line);
+                mCrtJumpBrightnessOnReveal = dozeCrt;
+            }
             sendUpdatePowerState();
         }
 
@@ -1761,14 +1769,18 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             final float currentBrightness = mPowerState.getScreenBrightness();
             final float currentSdrBrightness = mPowerState.getSdrScreenBrightness();
 
-            // While CRT plays before doze the screen is still ON under POLICY_DOZE; keep the
-            // awake brightness until the doze state is applied.
+            // While CRT plays at a doze entry the screen is still ON under POLICY_DOZE; keep the
+            // awake brightness until the CRT ends. The pass after it ends reveals AOD (or applies
+            // the doze state) and jumps straight to the doze brightness.
+            final boolean crtJumpBrightness = mCrtJumpBrightnessOnReveal;
+            mCrtJumpBrightnessOnReveal = false;
             if (BrightnessUtils.isValidBrightnessValue(animateValue)
                     && !mCrtRecorder.isRunning(CrtScreenOffPolicy.Path.DOZE)
                     && (animateValue != currentBrightness
                     || sdrAnimateValue != currentSdrBrightness)) {
                 boolean skipAnimation = initialRampSkip || hasBrightnessBuckets
-                        || !isDisplayContentVisible || brightnessIsTemporary;
+                        || !isDisplayContentVisible || brightnessIsTemporary
+                        || crtJumpBrightness;
                 final boolean isHdrOnlyChange = BrightnessSynchronizer.floatEquals(
                         sdrAnimateValue, currentSdrBrightness);
                 if (mFlags.isFastHdrTransitionsEnabled() && !skipAnimation && isHdrOnlyChange) {
@@ -2395,6 +2407,12 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             if (target != Display.STATE_ON) {
                 return;
             }
+            if (mCrtRecorder.isRunning(CrtScreenOffPolicy.Path.DOZE)
+                    && !mPowerRequest.isBrightOrDim()) {
+                // SystemUI holds STATE_ON under POLICY_DOZE (or a pulse does) while CRT plays;
+                // only a wake to an awake policy cancels it.
+                return;
+            }
             // If display state changed to on, proceed and stop the color fade and turn screen on.
             mPendingScreenOff = false;
             cancelCrtForWake();
@@ -2437,6 +2455,11 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.dismissColorFadeResources();
         }
 
+        if ((target == Display.STATE_ON || target == Display.STATE_DOZE
+                || target == Display.STATE_DOZE_SUSPEND) && playCrtAtDozeEntry()) {
+            return;
+        }
+
         if (target == Display.STATE_ON) {
             // Want screen on.  The contents of the screen may not yet
             // be visible if the color fade has not been dismissed because
@@ -2448,12 +2471,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.dismissColorFade();
             if (mPowerRequest.isBrightOrDim()) {
                 // Only a screen turned on for an awake user arms CRT; a doze pulse never does.
-                mCrtArmedForDoze = true;
+                mCrtDozeEntryGate.onAwakeScreenOn();
             }
         } else if (target == Display.STATE_DOZE) {
-            if (playCrtBeforeDoze()) {
-                return;
-            }
             // Want screen dozing.
             // Wait for brightness animation to complete beforehand when entering doze
             // from screen on to prevent a perceptible jump because brightness may operate
@@ -2472,9 +2492,6 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.setColorFadeLevel(1.0f);
             mPowerState.dismissColorFade();
         } else if (target == Display.STATE_DOZE_SUSPEND) {
-            if (playCrtBeforeDoze()) {
-                return;
-            }
             // Want screen dozing and suspended.
             // Wait for brightness animation to complete beforehand unless already
             // suspended because we may not be able to change it after suspension.
@@ -2518,7 +2535,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             mPowerState.dismissColorFade();
         } else {
             // Want screen off.
-            mCrtArmedForDoze = false;
+            mCrtDozeEntryGate.disarm();
             mPendingScreenOff = true;
             if (!mColorFadeEnabled) {
                 mPowerState.setColorFadeLevel(0.0f);
@@ -2563,18 +2580,17 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     }
 
     /**
-     * Plays the CRT animation while the display is still ON and a doze state is requested, but
-     * only when the screen was turned on for an awake user (see mCrtArmedForDoze). Returns true
-     * when it starts; the next pass finds the arm consumed and applies the doze state.
+     * Plays the CRT animation on the first update after the awake policy ends in a doze request,
+     * while the screen is still ON. That is the lock itself: SystemUI may hold STATE_ON under
+     * POLICY_DOZE for seconds afterwards, and CRT must never start when that hold releases.
+     * Returns true when it starts. When it ends, the STATE_ON branch (hold still active) reveals
+     * AOD, or the doze branch applies the doze state.
      */
-    private boolean playCrtBeforeDoze() {
-        if (!mCrtArmedForDoze) {
-            return false;
-        }
-        // Consumed by the first doze decision, whether CRT plays or falls back.
-        mCrtArmedForDoze = false;
-        if (mPowerState.getScreenState() != Display.STATE_ON
-                || mPowerState.getColorFadeLevel() < 1.0f) {
+    private boolean playCrtAtDozeEntry() {
+        if (!mCrtDozeEntryGate.consume(mPowerRequest.isBrightOrDim(),
+                mPowerRequest.policy == POLICY_DOZE,
+                mPowerState.getScreenState() == Display.STATE_ON,
+                mPowerState.getColorFadeLevel() == 1.0f)) {
             return false;
         }
         if (!prepareCrtColorFade(CrtScreenOffPolicy.Path.DOZE,
@@ -2867,7 +2883,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                     + mColorFadeOffAnimator.isStarted());
         }
         pw.println("  mScreenOffAnimationSetting=" + mScreenOffAnimationSetting);
-        pw.println("  mCrtArmedForDoze=" + mCrtArmedForDoze);
+        pw.println("  mCrtDozeEntryGate.isArmed()=" + mCrtDozeEntryGate.isArmed());
+        pw.println("  mCrtJumpBrightnessOnReveal=" + mCrtJumpBrightnessOnReveal);
         mCrtRecorder.dump(pw);
 
         pw.println();

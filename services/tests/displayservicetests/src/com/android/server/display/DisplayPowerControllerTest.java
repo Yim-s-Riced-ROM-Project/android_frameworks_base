@@ -2645,6 +2645,136 @@ public final class DisplayPowerControllerTest {
                 anyBoolean());
     }
 
+    @Test
+    public void crtSelected_heldDozeAtLock_startsCrtImmediately() {
+        // On the lockscreen SystemUI keeps STATE_ON under POLICY_DOZE while it animates to AOD.
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+
+        requestHeldDoze();
+
+        verify(mHolder.displayPowerState).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+        assertTrue(colorFadeOffAnimator().isStarted());
+    }
+
+    @Test
+    public void crtSelected_heldDoze_keepsCrtRunningThroughTheHold() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+
+        // Another update pass during the hold; the changed brightness makes it a new request.
+        DisplayPowerRequest dpr = new DisplayPowerRequest();
+        dpr.policy = DisplayPowerRequest.POLICY_DOZE;
+        dpr.dozeScreenState = Display.STATE_ON;
+        dpr.dozeScreenBrightness = 0.05f;
+        mHolder.dpc.requestPowerState(dpr, /* waitForNegativeProximity= */ false);
+        advanceTime(1);
+
+        assertTrue(colorFadeOffAnimator().isStarted());
+    }
+
+    @Test
+    public void crtSelected_heldDozeAnimationEnd_revealsAodWithoutDozeState() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+        assertTrue(colorFadeOffAnimator().isStarted());
+        verify(mHolder.displayPowerState, never()).setColorFadeLevel(1.0f);
+        clearInvocations(mHolder.displayPowerState);
+
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(0.0f);
+        colorFadeOffAnimator().end();
+        advanceTime(1); // Run the update the animator end listener sends
+
+        verify(mHolder.displayPowerState).setColorFadeLevel(1.0f);
+        verify(mHolder.displayPowerState).dismissColorFade();
+        verify(mHolder.displayPowerState, never()).setScreenState(eq(Display.STATE_DOZE), anyInt());
+    }
+
+    @Test
+    public void crtSelected_heldDozeReveal_jumpsToDozeBrightness() {
+        // AOD must not appear at lockscreen brightness and then dim.
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+        clearInvocations(mHolder.animator);
+
+        colorFadeOffAnimator().end();
+        // The reveal sets the fade level back to 1 before brightness is evaluated.
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(1.0f);
+        advanceTime(1);
+
+        verify(mHolder.animator).animateTo(eq(DOZE_BRIGHTNESS), anyFloat(),
+                eq(/* SCREEN_ANIMATION_RATE_MINIMUM */ 0.0f), anyBoolean());
+    }
+
+    @Test
+    public void crtSelected_holdRelease_neverStartsASecondCrt() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+        verify(mHolder.displayPowerState).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(0.0f);
+        colorFadeOffAnimator().end(); // CRT played at the lock.
+        advanceTime(1);
+        when(mHolder.displayPowerState.getColorFadeLevel()).thenReturn(1.0f); // AOD revealed
+        clearInvocations(mHolder.displayPowerState);
+
+        requestPolicy(DisplayPowerRequest.POLICY_DOZE); // The hold releases into STATE_DOZE.
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void crtSelected_fallbackAtLock_neverRetriesWhenTheHoldReleases() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze(); // prepare fails on the mock: CRT falls back at the lock
+        clearInvocations(mHolder.displayPowerState);
+
+        requestPolicy(DisplayPowerRequest.POLICY_DOZE);
+
+        verify(mHolder.displayPowerState, never()).prepareColorFade(any(), eq(ColorFade.MODE_CRT));
+    }
+
+    @Test
+    public void crtSelected_wakeDuringHeldDozeCrt_cancelsIt() {
+        setScreenOffAnimationSetting(1);
+        mHolder = createDisplayPowerController(DISPLAY_ID, UNIQUE_ID);
+        givenScreenOnAndUnfaded();
+        givenCrtPrepareSucceeds();
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+        requestHeldDoze();
+        assertTrue(colorFadeOffAnimator().isStarted());
+        clearInvocations(mHolder.displayPowerState);
+
+        requestPolicy(DisplayPowerRequest.POLICY_BRIGHT);
+
+        assertFalse(colorFadeOffAnimator().isStarted());
+        verify(mHolder.displayPowerState).setColorFadeLevel(1.0f);
+        verify(mHolder.displayPowerState).dismissColorFade();
+    }
+
+    private static final float DOZE_BRIGHTNESS = 0.03f;
+
     private void setScreenOffAnimationSetting(int value) {
         Settings.Secure.putIntForUser(mContext.getContentResolver(),
                 "lineage_screen_off_animation", value, UserHandle.USER_CURRENT);
@@ -2668,6 +2798,16 @@ public final class DisplayPowerControllerTest {
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
+    }
+
+    /** Requests POLICY_DOZE while the dream holds STATE_ON, as SystemUI does on the lockscreen. */
+    private void requestHeldDoze() {
+        DisplayPowerRequest dpr = new DisplayPowerRequest();
+        dpr.policy = DisplayPowerRequest.POLICY_DOZE;
+        dpr.dozeScreenState = Display.STATE_ON;
+        dpr.dozeScreenBrightness = DOZE_BRIGHTNESS;
+        mHolder.dpc.requestPowerState(dpr, /* waitForNegativeProximity= */ false);
+        advanceTime(1); // Run updatePowerState
     }
 
     private void requestPolicy(int policy) {
